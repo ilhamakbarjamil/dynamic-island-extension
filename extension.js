@@ -6,6 +6,7 @@ import GdkPixbuf from 'gi://GdkPixbuf';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { MediaWatcher } from './mpris.js';
+import { BatteryWatcher } from './battery.js';
 
 export default class DynamicIslandExtension extends Extension {
     enable() {
@@ -15,15 +16,18 @@ export default class DynamicIslandExtension extends Extension {
         this._originalShowBanners = this._settings.get_boolean('show-banners');
         this._settings.set_boolean('show-banners', false);
 
-        // ======== UKURAN UKURAN ========
-        this._idleWidth       = 124; // Ukuran pill idle (seperti punch-hole iPhone)
-        this._compactWidth    = 190; // Ukuran saat compact play music (art di kiri + wave di kanan)
+        // ======== UKURAN PILL ========
+        this._idleWidth       = 124;
+        this._compactWidth    = 190;
+        this._chargingWidth   = 235; // Lebar khusus charging ala iOS
         this._collapsedHeight = 35;
         this._expandedWidth   = 380;
         this._expandedHeight  = 112;
 
         // ======== STATE ========
         this._isExpanded = false;
+        this._isChargingBannerActive = false;
+        this._chargingDismissId = null;
         this._notificationQueue = [];
         this._isProcessingQueue = false;
         this._currentNotification = null;
@@ -35,14 +39,14 @@ export default class DynamicIslandExtension extends Extension {
         this._isDraggingSeek = false;
         this._coverCache = new Map();
 
-        // ======== MONITOR ========
+        // Monitor reposition
         this._monitor = Main.layoutManager.primaryMonitor;
         this._monitorsChangedId = Main.layoutManager.connect('monitors-changed', () => {
             this._monitor = Main.layoutManager.primaryMonitor;
             this._reposition(this._getCurrentPillWidth());
         });
 
-        // ======== PILL UTAMA ========
+        // Pill Utama
         this._island = new St.BoxLayout({
             style_class: 'dynamic-island-pill',
             reactive: true,
@@ -56,7 +60,73 @@ export default class DynamicIslandExtension extends Extension {
             y_align: Clutter.ActorAlign.CENTER,
         });
 
-        // ======== 1. COMPACT VIEW (Tampilan saat menciut ala iPhone) ========
+        // ================= 1. CHARGING VIEW (IPHONE STYLE) =================
+        this._chargingBox = new St.BoxLayout({
+            style_class: 'dynamic-island-charging-box',
+            vertical: false,
+            x_expand: true,
+            y_expand: true,
+            reactive: false,
+            visible: false,
+            opacity: 0,
+        });
+
+        // Sisi Kiri: Label "Charging"
+        this._chargingLabel = new St.Label({
+            style_class: 'dynamic-island-charging-label',
+            text: 'Charging',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        // Sisi Kanan: Persentase + Kapsul Baterai + Petir
+        this._chargingRightBox = new St.BoxLayout({
+            style_class: 'dynamic-island-charging-right',
+            vertical: false,
+            x_align: Clutter.ActorAlign.END,
+            y_align: Clutter.ActorAlign.CENTER,
+            x_expand: true,
+        });
+
+        this._chargingPercentLabel = new St.Label({
+            style_class: 'dynamic-island-charging-percent',
+            text: '100%',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        // Kapsul Baterai
+        this._batteryShell = new St.Widget({
+            style_class: 'dynamic-island-battery-shell',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._batteryFill = new St.Widget({
+            style_class: 'dynamic-island-battery-fill',
+            x_align: Clutter.ActorAlign.START,
+            y_align: Clutter.ActorAlign.FILL,
+        });
+        this._batteryCap = new St.Widget({
+            style_class: 'dynamic-island-battery-cap',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        this._batteryShell.add_child(this._batteryFill);
+
+        // Ikon Petir (Bolt)
+        this._chargingBolt = new St.Label({
+            style_class: 'dynamic-island-charging-bolt',
+            text: '⚡',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        this._chargingRightBox.add_child(this._chargingPercentLabel);
+        this._chargingRightBox.add_child(this._chargingBolt);
+        this._chargingRightBox.add_child(this._batteryShell);
+        this._chargingRightBox.add_child(this._batteryCap);
+
+        this._chargingBox.add_child(this._chargingLabel);
+        this._chargingBox.add_child(this._chargingRightBox);
+        this._island.add_child(this._chargingBox);
+
+        // ================= 2. COMPACT VIEW (MUSIC) =================
         this._compactBox = new St.BoxLayout({
             style_class: 'dynamic-island-compact',
             vertical: false,
@@ -66,7 +136,6 @@ export default class DynamicIslandExtension extends Extension {
             visible: false,
         });
 
-        // Mini Art di sisi kiri
         this._compactIcon = new St.Icon({
             icon_size: 18,
             icon_name: 'audio-x-generic-symbolic',
@@ -78,7 +147,6 @@ export default class DynamicIslandExtension extends Extension {
             child: this._compactIcon,
         });
 
-        // Equalizer Waveform di sisi kanan
         this._waveBars = [];
         this._waveBox = new St.BoxLayout({
             style_class: 'dynamic-island-wave',
@@ -102,7 +170,7 @@ export default class DynamicIslandExtension extends Extension {
         this._compactBox.add_child(this._waveBox);
         this._island.add_child(this._compactBox);
 
-        // ======== 2. EXPANDED VIEW (Tampilan detail saat membesar) ========
+        // ================= 3. EXPANDED VIEW =================
         this._content = new St.BoxLayout({
             style_class: 'dynamic-island-content',
             vertical: true,
@@ -113,7 +181,6 @@ export default class DynamicIslandExtension extends Extension {
             reactive: true,
         });
 
-        // Top Row
         this._topRow = new St.BoxLayout({
             style_class: 'dynamic-island-top-row',
             vertical: false,
@@ -155,7 +222,6 @@ export default class DynamicIslandExtension extends Extension {
         this._textInfo.add_child(this._bodyLabel);
         this._topRow.add_child(this._textInfo);
 
-        // Tombol Aksi Player
         this._actionBox = new St.BoxLayout({
             style_class: 'dynamic-island-actions',
             vertical: false,
@@ -186,10 +252,8 @@ export default class DynamicIslandExtension extends Extension {
         this._actionBox.add_child(this._playBtn);
         this._actionBox.add_child(this._nextBtn);
         this._topRow.add_child(this._actionBox);
-
         this._content.add_child(this._topRow);
 
-        // Progress Seekbar Row
         this._progressRow = new St.BoxLayout({
             style_class: 'dynamic-island-progress-row',
             vertical: false,
@@ -202,7 +266,6 @@ export default class DynamicIslandExtension extends Extension {
             text: '0:00',
             y_align: Clutter.ActorAlign.CENTER,
         });
-
         this._progressTrack = new St.Widget({
             style_class: 'dynamic-island-progress-track',
             x_expand: true,
@@ -210,7 +273,6 @@ export default class DynamicIslandExtension extends Extension {
             reactive: true,
             track_hover: true,
         });
-
         this._progressFill = new St.Widget({
             style_class: 'dynamic-island-progress-fill',
             x_align: Clutter.ActorAlign.START,
@@ -238,7 +300,6 @@ export default class DynamicIslandExtension extends Extension {
         this._progressRow.add_child(this._durationLabel);
         this._content.add_child(this._progressRow);
 
-        // Event Seekbar
         this._progressTrack.connect('button-press-event', (_a, event) => {
             if (!this._currentMedia?.canSeek) return Clutter.EVENT_STOP;
             this._isDraggingSeek = true;
@@ -257,12 +318,12 @@ export default class DynamicIslandExtension extends Extension {
 
         this._island.add_child(this._content);
         Main.uiGroup.add_child(this._island);
-
-        // Posisi Awal Langsung Muncul
         this._reposition(this._idleWidth);
 
-        // ======== HOVER INTERACTION DENGAN DEBOUNCE ========
+        // Hover
         this._island.connect('notify::hover', () => {
+            if (this._isChargingBannerActive) return; // Kunci saat charging sedang aktif
+
             const hovering = this._island.hover;
             const hasContent = this._notificationQueue.length > 0 || this._isProcessingQueue || this._mediaActive;
 
@@ -276,7 +337,6 @@ export default class DynamicIslandExtension extends Extension {
                 }
             } else {
                 if (this._isExpanded && !this._isDraggingSeek) {
-                    // Berikan toleransi 250ms agar tidak mudah tertutup tidak sengaja
                     this._unhoverTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
                         this._unhoverTimeoutId = null;
                         if (this._isProcessingQueue && this._waitingForMouseLeave) {
@@ -291,33 +351,37 @@ export default class DynamicIslandExtension extends Extension {
             }
         });
 
-        this._island.connect('button-release-event', () => {
-            if (this._currentNotification) {
-                this._onIslandClicked();
+        // ======== DEBUG: KLIK KANAN UNTUK TEST ANIMASI CHARGING ========
+        this._island.connect('button-press-event', (_actor, event) => {
+            if (event.get_button() === 3) { // 3 = Klik Kanan Mouse
+                console.log('[DynamicIsland] Test animasi charging dipicu!');
+                this._onBatteryEvent({ isCharging: true, percentage: 85 });
                 return Clutter.EVENT_STOP;
             }
             return Clutter.EVENT_PROPAGATE;
         });
 
-        // Kontrol Tombol Media
         this._prevBtn.connect('clicked', () => this._media?.previous());
         this._playBtn.connect('clicked', () => this._media?.togglePlayPause());
         this._nextBtn.connect('clicked', () => this._media?.next());
 
-        // ======== NOTIFIKASI SHELL ========
+        // Notifications
         this._sourceConnections = new Map();
         Main.messageTray.getSources().forEach(s => this._connectSource(s));
         this._sourceAddedId = Main.messageTray.connect('source-added', (_t, s) => this._connectSource(s));
         this._sourceRemovedId = Main.messageTray.connect('source-removed', (_t, s) => this._disconnectSource(s));
 
-        // ======== MPRIS MEDIA WATCHER ========
+        // MPRIS
         this._media = new MediaWatcher(state => this._onMediaUpdate(state));
 
-        // ======== ANIMASI WAVEFORM COMPACT ========
+        // Battery Watcher
+        this._battery = new BatteryWatcher(event => this._onBatteryEvent(event));
+
+        // Wave Animation
         this._wavePhase = 0;
         this._waveTickId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 180, () => {
             const playing = this._currentMedia?.status === 'Playing';
-            if (!this._isExpanded && this._mediaActive && playing) {
+            if (!this._isExpanded && !this._isChargingBannerActive && this._mediaActive && playing) {
                 const patterns = [8, 16, 22, 12, 19, 6];
                 this._wavePhase = (this._wavePhase + 1) % patterns.length;
                 this._waveBars.forEach((bar, i) => {
@@ -327,13 +391,11 @@ export default class DynamicIslandExtension extends Extension {
                         mode: Clutter.AnimationMode.EASE_IN_OUT_SINE,
                     });
                 });
-            } else if (!playing) {
-                this._waveBars.forEach(bar => bar.set_height(4));
             }
             return GLib.SOURCE_CONTINUE;
         });
 
-        // ======== PROGRESS BAR TICKER ========
+        // Progress Bar
         this._progressTickId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1000, () => {
             if (this._mediaActive && this._currentMedia?.status === 'Playing' && this._isExpanded && !this._isDraggingSeek) {
                 this._updateProgressUI();
@@ -341,14 +403,71 @@ export default class DynamicIslandExtension extends Extension {
             return GLib.SOURCE_CONTINUE;
         });
 
-        // Refresh status media awal
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-            this._media?.refresh();
+    }
+
+    // ================= ANIMASI CHARGING IPHONE =================
+    _onBatteryEvent({ isCharging, percentage }) {
+        if (!isCharging) return; // Fokus pada animasi charging saat charger terpasang
+
+        if (this._chargingDismissId) {
+            GLib.source_remove(this._chargingDismissId);
+            this._chargingDismissId = null;
+        }
+
+        this._isChargingBannerActive = true;
+
+        // Set teks & persentase
+        this._chargingLabel.set_text('Charging');
+        this._chargingPercentLabel.set_text(`${percentage}%`);
+
+        // Hitung fill baterai (lebar total shell 24px, padding 2px => max 20px)
+        const fillWidth = Math.max(2, Math.floor((percentage / 100) * 20));
+        this._batteryFill.width = fillWidth;
+
+        // Sembunyikan elemen lain
+        this._compactBox.visible = false;
+        this._content.visible = false;
+        this._chargingBox.visible = true;
+
+        // Animasikan meregang elastis (EASE_OUT_BACK)
+        this._repositionAndResize(this._chargingWidth, this._collapsedHeight, 340, Clutter.AnimationMode.EASE_OUT_BACK);
+
+        this._chargingBox.ease({
+            opacity: 255,
+            duration: 180,
+            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+        });
+
+        // Tahan selama 3 detik lalu ciutkan kembali
+        this._chargingDismissId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 3000, () => {
+            this._chargingDismissId = null;
+            this._dismissChargingBanner();
             return GLib.SOURCE_REMOVE;
         });
     }
 
+    _dismissChargingBanner() {
+        this._chargingBox.ease({
+            opacity: 0,
+            duration: 150,
+            mode: Clutter.AnimationMode.EASE_IN_QUAD,
+            onComplete: () => {
+                this._chargingBox.visible = false;
+                this._isChargingBannerActive = false;
+
+                // Kembalikan ke keadaan sebelumnya
+                if (this._mediaActive) {
+                    this._compactBox.visible = true;
+                    this._repositionAndResize(this._compactWidth, this._collapsedHeight, 300, Clutter.AnimationMode.EASE_OUT_QUAD);
+                } else {
+                    this._repositionAndResize(this._idleWidth, this._collapsedHeight, 300, Clutter.AnimationMode.EASE_OUT_QUAD);
+                }
+            },
+        });
+    }
+
     _getCurrentPillWidth() {
+        if (this._isChargingBannerActive) return this._chargingWidth;
         if (this._isExpanded) return this._expandedWidth;
         if (this._mediaActive) return this._compactWidth;
         return this._idleWidth;
@@ -357,90 +476,32 @@ export default class DynamicIslandExtension extends Extension {
     _reposition(width) {
         if (!this._island || !this._monitor) return;
         const x = this._monitor.x + Math.floor((this._monitor.width - width) / 2);
-        const y = this._monitor.y + 7; // Posisi notch menempel di atas
+        const y = this._monitor.y + 7;
         this._island.set_position(x, y);
     }
 
-    // ================= NOTIFIKASI =================
-    _connectSource(source) {
-        if (this._sourceConnections.has(source)) return;
-        const id = source.connect('notification-added', (_s, n) => this._onNotification(n));
-        this._sourceConnections.set(source, id);
+    _repositionAndResize(targetWidth, targetHeight, duration = 300, mode = Clutter.AnimationMode.EASE_OUT_BACK) {
+        const targetX = this._monitor.x + Math.floor((this._monitor.width - targetWidth) / 2);
+        this._island.ease({
+            width: targetWidth,
+            height: targetHeight,
+            x: targetX,
+            duration,
+            mode,
+        });
     }
 
-    _disconnectSource(source) {
-        if (this._sourceConnections.has(source)) {
-            try { source.disconnect(this._sourceConnections.get(source)); } catch (_) {}
-            this._sourceConnections.delete(source);
-        }
-    }
-
-    _onNotification(notification) {
-        this._notificationQueue.push(notification);
-        this._processQueue();
-    }
-
-    _processQueue() {
-        if (this._isProcessingQueue || this._notificationQueue.length === 0) return;
-
-        this._isProcessingQueue = true;
-        this._currentNotification = this._notificationQueue.shift();
-        this._waitingForMouseLeave = false;
-
-        const n = this._currentNotification;
-        this._titleLabel.set_text(n.title || 'Notifikasi');
-        this._bodyLabel.set_text(n.body || '');
-
-        if (n.gicon)          this._setIcon({ gicon: n.gicon });
-        else if (n.icon_name) this._setIcon({ iconName: n.icon_name });
-        else                  this._setIcon({ iconName: 'dialog-information-symbolic' });
-
-        this._actionBox.visible = false;
-        this._progressRow.visible = false;
-
-        this._triggerAutoExpand();
-    }
-
-    _setIcon({ gicon = null, iconName = null, pixbuf = null }) {
-        this._icon.gicon = null;
-        this._icon.icon_name = null;
-        this._compactIcon.gicon = null;
-        this._compactIcon.icon_name = null;
-
-        if (gicon) {
-            this._icon.gicon = gicon;
-            this._compactIcon.gicon = gicon;
-        } else if (pixbuf) {
-            try {
-                const [ok, buffer] = pixbuf.save_to_bufferv('png', [], []);
-                if (ok) {
-                    const bytesIcon = Gio.BytesIcon.new(GLib.Bytes.new(buffer));
-                    this._icon.gicon = bytesIcon;
-                    this._compactIcon.gicon = bytesIcon;
-                }
-            } catch (_) {
-                this._icon.icon_name = 'audio-x-generic-symbolic';
-                this._compactIcon.icon_name = 'audio-x-generic-symbolic';
-            }
-        } else if (iconName) {
-            this._icon.icon_name = iconName;
-            this._compactIcon.icon_name = iconName;
-        }
-    }
-
-    // ================= MEDIA =================
+    // ================= MEDIA & CONTROLS =================
     _onMediaUpdate(state) {
         this._currentMedia = state;
 
-        // Jika player ditutup atau status Stopped
         if (!state || state.status === 'Stopped') {
             this._mediaActive = false;
             this._compactBox.visible = false;
             this._actionBox.visible = false;
             this._progressRow.visible = false;
 
-            // Jangan sembunyikan pulau! Kembalikan ke mode Idle pill
-            if (!this._isProcessingQueue) {
+            if (!this._isProcessingQueue && !this._isChargingBannerActive) {
                 this._collapse();
             }
             return;
@@ -456,8 +517,7 @@ export default class DynamicIslandExtension extends Extension {
             : 'media-playback-start-symbolic';
         this._playBtn.child.icon_name = playIcon;
 
-        // Kontrol keterlihatan tampilan compact
-        if (!this._isExpanded && !this._isProcessingQueue) {
+        if (!this._isExpanded && !this._isProcessingQueue && !this._isChargingBannerActive) {
             this._compactBox.visible = true;
             this._repositionAndResize(this._compactWidth, this._collapsedHeight);
         }
@@ -505,7 +565,33 @@ export default class DynamicIslandExtension extends Extension {
         });
     }
 
-    // ================= PROGRESS BAR =================
+    _setIcon({ gicon = null, iconName = null, pixbuf = null }) {
+        this._icon.gicon = null;
+        this._icon.icon_name = null;
+        this._compactIcon.gicon = null;
+        this._compactIcon.icon_name = null;
+
+        if (gicon) {
+            this._icon.gicon = gicon;
+            this._compactIcon.gicon = gicon;
+        } else if (pixbuf) {
+            try {
+                const [ok, buffer] = pixbuf.save_to_bufferv('png', [], []);
+                if (ok) {
+                    const bytesIcon = Gio.BytesIcon.new(GLib.Bytes.new(buffer));
+                    this._icon.gicon = bytesIcon;
+                    this._compactIcon.gicon = bytesIcon;
+                }
+            } catch (_) {
+                this._icon.icon_name = 'audio-x-generic-symbolic';
+                this._compactIcon.icon_name = 'audio-x-generic-symbolic';
+            }
+        } else if (iconName) {
+            this._icon.icon_name = iconName;
+            this._compactIcon.icon_name = iconName;
+        }
+    }
+
     _formatTime(micros) {
         const sec = Math.max(0, Math.floor(micros / 1_000_000));
         const m = Math.floor(sec / 60);
@@ -529,7 +615,6 @@ export default class DynamicIslandExtension extends Extension {
 
         this._progressFill.width = Math.max(0, fillW);
         this._progressHandle.set_position(Math.max(0, fillW - 4), 0);
-
         this._timeLabel.set_text(this._formatTime(pos));
         this._durationLabel.set_text(this._formatTime(duration));
     }
@@ -550,20 +635,46 @@ export default class DynamicIslandExtension extends Extension {
         this._progressFill.width = Math.max(0, fillW);
         this._progressHandle.set_position(Math.max(0, fillW - 4), 0);
         this._timeLabel.set_text(this._formatTime(target));
-
         this._media?.seek(target);
     }
 
-    // ================= ANIMASI EKSPANSI & PENCIUTAN =================
-    _repositionAndResize(targetWidth, targetHeight, duration = 300, mode = Clutter.AnimationMode.EASE_OUT_BACK) {
-        const targetX = this._monitor.x + Math.floor((this._monitor.width - targetWidth) / 2);
-        this._island.ease({
-            width: targetWidth,
-            height: targetHeight,
-            x: targetX,
-            duration,
-            mode,
-        });
+    // ================= NOTIFIKASI =================
+    _connectSource(source) {
+        if (this._sourceConnections.has(source)) return;
+        const id = source.connect('notification-added', (_s, n) => this._onNotification(n));
+        this._sourceConnections.set(source, id);
+    }
+
+    _disconnectSource(source) {
+        if (this._sourceConnections.has(source)) {
+            try { source.disconnect(this._sourceConnections.get(source)); } catch (_) {}
+            this._sourceConnections.delete(source);
+        }
+    }
+
+    _onNotification(notification) {
+        this._notificationQueue.push(notification);
+        this._processQueue();
+    }
+
+    _processQueue() {
+        if (this._isProcessingQueue || this._notificationQueue.length === 0 || this._isChargingBannerActive) return;
+
+        this._isProcessingQueue = true;
+        this._currentNotification = this._notificationQueue.shift();
+        this._waitingForMouseLeave = false;
+
+        const n = this._currentNotification;
+        this._titleLabel.set_text(n.title || 'Notifikasi');
+        this._bodyLabel.set_text(n.body || '');
+
+        if (n.gicon)          this._setIcon({ gicon: n.gicon });
+        else if (n.icon_name) this._setIcon({ iconName: n.icon_name });
+        else                  this._setIcon({ iconName: 'dialog-information-symbolic' });
+
+        this._actionBox.visible = false;
+        this._progressRow.visible = false;
+        this._triggerAutoExpand();
     }
 
     _triggerAutoExpand() {
@@ -616,7 +727,7 @@ export default class DynamicIslandExtension extends Extension {
                 this._content.visible = false;
                 this._actionBox.visible = false;
                 this._progressRow.visible = false;
-                if (this._mediaActive && !this._isProcessingQueue) {
+                if (this._mediaActive && !this._isProcessingQueue && !this._isChargingBannerActive) {
                     this._compactBox.visible = true;
                 }
             },
@@ -635,24 +746,12 @@ export default class DynamicIslandExtension extends Extension {
             if (this._notificationQueue.length > 0) {
                 this._processQueue();
             } else if (this._mediaActive) {
-                // Restore tampilan media jika ada
                 this._onMediaUpdate(this._currentMedia);
             }
             return GLib.SOURCE_REMOVE;
         });
     }
 
-    _onIslandClicked() {
-        if (!this._currentNotification) return;
-        this._currentNotification.activate();
-        if (this._autoCollapseId) {
-            GLib.source_remove(this._autoCollapseId);
-            this._autoCollapseId = null;
-        }
-        this._collapseAndNext();
-    }
-
-    // ================= DISABLE =================
     disable() {
         if (this._settings) {
             this._settings.set_boolean('show-banners', this._originalShowBanners);
@@ -662,29 +761,28 @@ export default class DynamicIslandExtension extends Extension {
             Main.layoutManager.disconnect(this._monitorsChangedId);
             this._monitorsChangedId = null;
         }
-        if (this._sourceAddedId) {
-            Main.messageTray.disconnect(this._sourceAddedId);
-            this._sourceAddedId = null;
-        }
-        if (this._sourceRemovedId) {
-            Main.messageTray.disconnect(this._sourceRemovedId);
-            this._sourceRemovedId = null;
-        }
+        if (this._sourceAddedId) Main.messageTray.disconnect(this._sourceAddedId);
+        if (this._sourceRemovedId) Main.messageTray.disconnect(this._sourceRemovedId);
+
         for (const [source, id] of this._sourceConnections) {
             try { source.disconnect(id); } catch (_) {}
         }
         this._sourceConnections.clear();
 
         if (this._autoCollapseId) GLib.source_remove(this._autoCollapseId);
+        if (this._chargingDismissId) GLib.source_remove(this._chargingDismissId);
         if (this._unhoverTimeoutId) GLib.source_remove(this._unhoverTimeoutId);
         if (this._waveTickId) GLib.source_remove(this._waveTickId);
         if (this._progressTickId) GLib.source_remove(this._progressTickId);
 
+        if (this._battery) {
+            this._battery.destroy();
+            this._battery = null;
+        }
         if (this._media) {
             this._media.destroy();
             this._media = null;
         }
-
         if (this._island) {
             this._island.destroy();
             this._island = null;
