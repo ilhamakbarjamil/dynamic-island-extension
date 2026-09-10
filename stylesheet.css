@@ -1,0 +1,64 @@
+.dynamic-island-pill {
+    background-color: #000000;
+    border-radius: 32px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.55);
+}
+
+.dynamic-island-content {
+    padding: 6px 12px;
+    spacing: 10px;
+}
+
+.dynamic-island-cover-art {
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    background-color: #1c1c1e;
+}
+
+.dynamic-island-track-info {
+    spacing: 2px;
+}
+
+.dynamic-island-title {
+    color: #ffffff;
+    font-size: 0.95em;
+    font-weight: 600;
+}
+
+.dynamic-island-artist {
+    color: #b0b0b5;
+    font-size: 0.82em;
+}
+
+.dynamic-island-wave {
+    spacing: 3px;
+    padding: 0 8px;
+}
+
+.dynamic-island-wave-bar {
+    background-color: #ffffff;
+    border-radius: 2px;
+    width: 3px;
+    min-height: 4px;
+}
+
+.dynamic-island-actions {
+    spacing: 6px;
+    padding-right: 4px;
+}
+
+.dynamic-island-btn {
+    background-color: rgba(255, 255, 255, 0.14);
+    border-radius: 999px;
+    padding: 6px;
+    color: #ffffff;
+}
+
+.dynamic-island-btn:hover {
+    background-color: rgba(255, 255, 255, 0.28);
+}
+
+.dynamic-island-btn:active {
+    background-color: rgba(255, 255, 255, 0.42);
+}

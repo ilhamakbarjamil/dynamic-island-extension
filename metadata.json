@@ -1,0 +1,7 @@
+{
+  "name": "Dynamic Island",
+  "description": "Overlay notch interaktif independen di tengah layar.",
+  "uuid": "dynamic-island@ilhamakbarjamil.github.com",
+  "shell-version": ["46"],
+  "url": "https://github.com/akbar/dynamic-island"
+}
