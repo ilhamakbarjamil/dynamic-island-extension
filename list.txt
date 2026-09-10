@@ -1,1 +1,4 @@
 1. tampilan pomodoro perlu di revisi
+2. tampilan record perlu di revisi
+    2.1. logika ketika di obs screen cast itu otomatis nyala
+    
