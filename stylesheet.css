@@ -1,21 +1,12 @@
-/* ================= 1. PILL UTAMA & SQUIRCLE TRANSFORM ================= */
+/* ================= 1. PILL UTAMA (PURE BLACK OLED - TANPA BAYANGAN KOTAK) ================= */
 .dynamic-island-pill {
     background-color: #000000;
-    border-radius: 999px; /* Bentuk kapsul saat collapsed */
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.75), 0 0 0 0.5px rgba(255, 255, 255, 0.14);
+    border-radius: 36px;
+    /* Border hairline elegan dan presisi mengikuti lengkungan tanpa glitch bayangan */
+    border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-/* Saat membesar menjadi Media Player: Berubah menjadi Squircle elegan khas iOS */
-.dynamic-island-pill.is-expanded-media {
-    border-radius: 38px !important;
-}
-
-/* Saat membesar menjadi Notifikasi */
-.dynamic-island-pill.is-expanded-notif {
-    border-radius: 30px !important;
-}
-
-/* ================= 2. NOTIFIKASI SQUIRCLE (SCREENSHOT DLL) ================= */
+/* ================= 2. NOTIFIKASI SQUIRCLE ================= */
 .dynamic-island-notif-box {
     padding: 0 16px;
     spacing: 14px;
@@ -39,7 +30,7 @@
 }
 
 .dynamic-island-notif-body {
-    color: #8e8e93; /* Warna abu-abu halus khas Apple */
+    color: #8e8e93;
     font-size: 0.82em;
     font-weight: 500;
 }
@@ -63,19 +54,18 @@
 }
 
 .dynamic-island-wave-bar {
-    background-color: #30d158; /* Hijau iOS Now Playing */
+    background-color: #30d158;
     border-radius: 999px;
     width: 3px;
     min-height: 4px;
 }
 
-/* ================= 4. EXPANDED NOW PLAYING (PERSIS IPHONE) ================= */
+/* ================= 4. EXPANDED NOW PLAYING ================= */
 .dynamic-island-media-content {
     padding: 16px 20px 14px 20px;
     spacing: 12px;
 }
 
-/* Top Row: Cover Art Besar + Track Info + Equalizer */
 .dynamic-island-media-top-row {
     spacing: 14px;
 }
@@ -85,7 +75,6 @@
     height: 52px;
     border-radius: 12px;
     background-color: #1c1c1e;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
 .dynamic-island-track-info {
@@ -109,7 +98,6 @@
     padding-left: 6px;
 }
 
-/* Row 2: Progress Seekbar & Waktu */
 .dynamic-island-progress-section {
     spacing: 6px;
     padding-top: 2px;
@@ -133,14 +121,13 @@
 }
 
 .dynamic-island-time {
-    color: #636366; /* Warna waktu Apple */
+    color: #636366;
     font-size: 0.74em;
     font-weight: 600;
 }
 
-/* Row 3: Tombol Kontrol Tengah Bawah */
 .dynamic-island-controls-row {
-    spacing: 36px; /* Jarak lega antar tombol ala iOS */
+    spacing: 36px;
     padding-top: 2px;
 }
 
@@ -163,7 +150,7 @@
     padding: 4px;
 }
 
-/* ================= 5. VOLUME / BRIGHTNESS & CHARGING ================= */
+/* ================= 5. HUD & CHARGING ================= */
 .dynamic-island-hud-box {
     padding: 0 16px;
     spacing: 14px;

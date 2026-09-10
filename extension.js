@@ -10,24 +10,29 @@ import { BatteryWatcher } from './battery.js';
 
 export default class DynamicIslandExtension extends Extension {
     enable() {
-        console.log('[DynamicIsland] Mengaktifkan Dynamic Island (iOS Precise Design)...');
+        console.log('[DynamicIsland] Mengaktifkan Dynamic Island (Clean OLED Look)...');
 
+        // Matikan Banner Notifikasi Bawaan Sistem
         this._settings = new Gio.Settings({ schema_id: 'org.gnome.desktop.notifications' });
         this._originalShowBanners = this._settings.get_boolean('show-banners');
         this._settings.set_boolean('show-banners', false);
 
-        // ======== DIMENSI PRESISI ALA IPHONE ========
+        // Sembunyikan kontainer banner pop-up bawaan GNOME
+        if (Main.messageTray._bannerBin) {
+            Main.messageTray._bannerBin.hide();
+        }
+
+        // ======== DIMENSI ========
         this._idleWidth           = 124;
         this._collapsedHeight     = 35;
         this._compactMediaWidth   = 195;
         this._hudWidth            = 225;
         this._chargingWidth       = 235;
 
-        // Expanded States (Squircle)
         this._notifWidth          = 370;
-        this._notifHeight         = 68;  // Banner notifikasi kompak
+        this._notifHeight         = 68;
         this._mediaExpandedWidth  = 385;
-        this._mediaExpandedHeight = 168; // Player musik lega khas iOS
+        this._mediaExpandedHeight = 168;
 
         // ======== STATE ========
         this._isExpanded = false;
@@ -46,14 +51,13 @@ export default class DynamicIslandExtension extends Extension {
         this._isDraggingSeek = false;
         this._coverCache = new Map();
 
-        // Monitor reposition
         this._monitor = Main.layoutManager.primaryMonitor;
         this._monitorsChangedId = Main.layoutManager.connect('monitors-changed', () => {
             this._monitor = Main.layoutManager.primaryMonitor;
             this._reposition(this._getCurrentPillWidth());
         });
 
-        // Pill Utama
+        // Pill Utama (clip_to_allocation memastikan konten tidak pernah bocor ke luar)
         this._island = new St.BoxLayout({
             style_class: 'dynamic-island-pill',
             reactive: true,
@@ -63,6 +67,7 @@ export default class DynamicIslandExtension extends Extension {
             width: this._idleWidth,
             height: this._collapsedHeight,
             vertical: false,
+            clip_to_allocation: true,
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
         });
@@ -151,7 +156,7 @@ export default class DynamicIslandExtension extends Extension {
         this._chargingBox.add_child(this._chargingRightBox);
         this._island.add_child(this._chargingBox);
 
-        // ================= 3. COMPACT VIEW (MUSIC KECIL) =================
+        // ================= 3. COMPACT VIEW (MUSIC) =================
         this._compactBox = new St.BoxLayout({
             style_class: 'dynamic-island-compact',
             vertical: false,
@@ -192,7 +197,7 @@ export default class DynamicIslandExtension extends Extension {
         this._compactBox.add_child(this._waveBox);
         this._island.add_child(this._compactBox);
 
-        // ================= 4. NOTIFICATION VIEW (KOMPAK SQUIRCLE) =================
+        // ================= 4. NOTIFICATION VIEW =================
         this._notifBox = new St.BoxLayout({
             style_class: 'dynamic-island-notif-box',
             vertical: false,
@@ -234,7 +239,7 @@ export default class DynamicIslandExtension extends Extension {
         this._notifBox.add_child(this._notifTextBox);
         this._island.add_child(this._notifBox);
 
-        // ================= 5. EXPANDED NOW PLAYING (PERSIS IPHONE) =================
+        // ================= 5. EXPANDED MEDIA VIEW =================
         this._mediaContent = new St.BoxLayout({
             style_class: 'dynamic-island-media-content',
             vertical: true,
@@ -245,7 +250,7 @@ export default class DynamicIslandExtension extends Extension {
             reactive: true,
         });
 
-        // --- ROW 1: HEADER (Cover Art Besar + Teks + Mini Waveform) ---
+        // Top Row
         this._topRow = new St.BoxLayout({
             style_class: 'dynamic-island-media-top-row',
             vertical: false,
@@ -283,7 +288,6 @@ export default class DynamicIslandExtension extends Extension {
         this._textInfo.add_child(this._titleLabel);
         this._textInfo.add_child(this._bodyLabel);
 
-        // Equalizer mini di kanan atas
         this._headerWaveBars = [];
         this._headerWaveBox = new St.BoxLayout({
             style_class: 'dynamic-island-header-wave',
@@ -307,7 +311,7 @@ export default class DynamicIslandExtension extends Extension {
         this._topRow.add_child(this._headerWaveBox);
         this._mediaContent.add_child(this._topRow);
 
-        // --- ROW 2: PROGRESS BAR & DURASI WAKTU ---
+        // Progress Section
         this._progressSection = new St.BoxLayout({
             style_class: 'dynamic-island-progress-section',
             vertical: true,
@@ -350,7 +354,7 @@ export default class DynamicIslandExtension extends Extension {
         this._progressSection.add_child(this._timeRow);
         this._mediaContent.add_child(this._progressSection);
 
-        // --- ROW 3: TOMBOL KONTROL DI TENGAH BAWAH (IPHONE STYLE) ---
+        // Bottom Controls
         this._controlsRow = new St.BoxLayout({
             style_class: 'dynamic-island-controls-row',
             vertical: false,
@@ -402,7 +406,7 @@ export default class DynamicIslandExtension extends Extension {
             return Clutter.EVENT_STOP;
         });
 
-        // OSD Hook
+        // OSD Hook (Cegat OSD bawaan sistem)
         this._origOsdShow = Main.osdWindowManager.show.bind(Main.osdWindowManager);
         Main.osdWindowManager.show = (monitorIndex, icon, label, level, maxLevel) => {
             let iconName = '';
@@ -437,7 +441,7 @@ export default class DynamicIslandExtension extends Extension {
                 }
             } else {
                 if (this._isExpanded && !this._isDraggingSeek) {
-                    this._unhoverTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 260, () => {
+                    this._unhoverTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 220, () => {
                         this._unhoverTimeoutId = null;
                         if (this._isProcessingQueue && this._waitingForMouseLeave) {
                             this._waitingForMouseLeave = false;
@@ -449,15 +453,6 @@ export default class DynamicIslandExtension extends Extension {
                     });
                 }
             }
-        });
-
-        // Test Shortcuts
-        this._island.connect('button-press-event', (_actor, event) => {
-            if (event.get_button() === 3) {
-                this._onBatteryEvent({ isCharging: true, percentage: 85 });
-                return Clutter.EVENT_STOP;
-            }
-            return Clutter.EVENT_PROPAGATE;
         });
 
         this._prevBtn.connect('clicked', () => this._media?.previous());
@@ -473,7 +468,7 @@ export default class DynamicIslandExtension extends Extension {
         // MPRIS
         this._media = new MediaWatcher(state => this._onMediaUpdate(state));
 
-        // Battery
+        // Battery Watcher (Hanya colok charger)
         this._battery = new BatteryWatcher(event => this._onBatteryEvent(event));
 
         // Animasi Equalizer
@@ -484,7 +479,6 @@ export default class DynamicIslandExtension extends Extension {
                 const patterns = [8, 16, 22, 11, 19, 7];
                 this._wavePhase = (this._wavePhase + 1) % patterns.length;
 
-                // Animasi di mode collapsed
                 if (!this._isExpanded) {
                     this._waveBars.forEach((bar, i) => {
                         bar.ease({
@@ -494,7 +488,6 @@ export default class DynamicIslandExtension extends Extension {
                         });
                     });
                 } else {
-                    // Animasi di header player expanded
                     this._headerWaveBars.forEach((bar, i) => {
                         bar.ease({
                             height: Math.max(4, Math.floor(patterns[(this._wavePhase + i) % patterns.length] * 0.7)),
@@ -516,26 +509,6 @@ export default class DynamicIslandExtension extends Extension {
         });
     }
 
-    // ================= SQUIRCLE ANIMATION CONTROLLER =================
-    _repositionAndResize(width, height, radiusClass, duration = 320, mode = Clutter.AnimationMode.EASE_OUT_BACK) {
-        const targetX = this._monitor.x + Math.floor((this._monitor.width - width) / 2);
-
-        // Atur styling radius squircle
-        this._island.remove_style_class_name('is-expanded-media');
-        this._island.remove_style_class_name('is-expanded-notif');
-        if (radiusClass) {
-            this._island.add_style_class_name(radiusClass);
-        }
-
-        this._island.ease({
-            width,
-            height,
-            x: targetX,
-            duration,
-            mode,
-        });
-    }
-
     _getCurrentPillWidth() {
         if (this._isHudActive) return this._hudWidth;
         if (this._isChargingBannerActive) return this._chargingWidth;
@@ -548,6 +521,17 @@ export default class DynamicIslandExtension extends Extension {
         if (!this._island || !this._monitor) return;
         const x = this._monitor.x + Math.floor((this._monitor.width - width) / 2);
         this._island.set_position(x, this._monitor.y + 7);
+    }
+
+    _repositionAndResize(width, height, duration = 280, mode = Clutter.AnimationMode.EASE_OUT_QUAD) {
+        const targetX = this._monitor.x + Math.floor((this._monitor.width - width) / 2);
+        this._island.ease({
+            width,
+            height,
+            x: targetX,
+            duration,
+            mode,
+        });
     }
 
     // ================= NOTIFIKASI =================
@@ -601,12 +585,12 @@ export default class DynamicIslandExtension extends Extension {
         this._mediaContent.visible = false;
         this._notifBox.visible = true;
 
-        this._repositionAndResize(this._notifWidth, this._notifHeight, 'is-expanded-notif', 320, Clutter.AnimationMode.EASE_OUT_BACK);
+        this._repositionAndResize(this._notifWidth, this._notifHeight, 320, Clutter.AnimationMode.EASE_OUT_BACK);
 
         this._notifBox.ease({
             opacity: 255,
             duration: 180,
-            delay: 50,
+            delay: 40,
             mode: Clutter.AnimationMode.EASE_OUT_QUAD,
         });
 
@@ -628,12 +612,12 @@ export default class DynamicIslandExtension extends Extension {
         this._notifBox.visible = false;
         this._mediaContent.visible = true;
 
-        this._repositionAndResize(this._mediaExpandedWidth, this._mediaExpandedHeight, 'is-expanded-media', 340, Clutter.AnimationMode.EASE_OUT_BACK);
+        this._repositionAndResize(this._mediaExpandedWidth, this._mediaExpandedHeight, 320, Clutter.AnimationMode.EASE_OUT_BACK);
 
         this._mediaContent.ease({
             opacity: 255,
-            duration: 220,
-            delay: 70,
+            duration: 200,
+            delay: 60,
             mode: Clutter.AnimationMode.EASE_OUT_QUAD,
         });
 
@@ -648,25 +632,31 @@ export default class DynamicIslandExtension extends Extension {
 
         this._mediaContent.ease({
             opacity: 0,
-            duration: 140,
-            mode: Clutter.AnimationMode.EASE_IN_QUAD,
+            duration: 90,
+            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
             onComplete: () => {
                 this._mediaContent.visible = false;
                 this._notifBox.visible = false;
                 if (this._mediaActive && !this._isProcessingQueue && !this._isChargingBannerActive && !this._isHudActive) {
                     this._compactBox.visible = true;
+                    this._compactBox.opacity = 0;
+                    this._compactBox.ease({
+                        opacity: 255,
+                        duration: 140,
+                        mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                    });
                 }
             },
         });
 
-        this._repositionAndResize(targetWidth, this._collapsedHeight, null, 300, Clutter.AnimationMode.EASE_OUT_QUAD);
+        this._repositionAndResize(targetWidth, this._collapsedHeight, 260, Clutter.AnimationMode.EASE_OUT_QUAD);
     }
 
     _collapseAndNext() {
         this._notifBox.ease({
             opacity: 0,
-            duration: 140,
-            mode: Clutter.AnimationMode.EASE_IN_QUAD,
+            duration: 90,
+            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
             onComplete: () => {
                 this._notifBox.visible = false;
             },
@@ -674,9 +664,9 @@ export default class DynamicIslandExtension extends Extension {
 
         this._isExpanded = false;
         const targetWidth = this._mediaActive ? this._compactMediaWidth : this._idleWidth;
-        this._repositionAndResize(targetWidth, this._collapsedHeight, null, 300, Clutter.AnimationMode.EASE_OUT_QUAD);
+        this._repositionAndResize(targetWidth, this._collapsedHeight, 260, Clutter.AnimationMode.EASE_OUT_QUAD);
 
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 320, () => {
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 280, () => {
             this._isProcessingQueue = false;
             this._waitingForMouseLeave = false;
             this._currentNotification = null;
@@ -716,7 +706,7 @@ export default class DynamicIslandExtension extends Extension {
 
         if (!this._isExpanded && !this._isProcessingQueue && !this._isChargingBannerActive && !this._isHudActive) {
             this._compactBox.visible = true;
-            this._repositionAndResize(this._compactMediaWidth, this._collapsedHeight, null);
+            this._repositionAndResize(this._compactMediaWidth, this._collapsedHeight, 240, Clutter.AnimationMode.EASE_OUT_QUAD);
         }
 
         if (this._isExpanded) {
@@ -778,7 +768,7 @@ export default class DynamicIslandExtension extends Extension {
         this._compactIcon.icon_name = iconName || 'audio-x-generic-symbolic';
     }
 
-    // ================= SEEKBAR & DURASI =================
+    // ================= PROGRESS BAR & SEEK =================
     _formatTime(micros) {
         const sec = Math.max(0, Math.floor(micros / 1_000_000));
         const m = Math.floor(sec / 60);
@@ -847,21 +837,21 @@ export default class DynamicIslandExtension extends Extension {
         this._chargingBox.visible = false;
         this._hudBox.visible = true;
 
-        this._repositionAndResize(this._hudWidth, this._collapsedHeight, null, 280, Clutter.AnimationMode.EASE_OUT_BACK);
+        this._repositionAndResize(this._hudWidth, this._collapsedHeight, 280, Clutter.AnimationMode.EASE_OUT_BACK);
         this._hudBox.ease({ opacity: 255, duration: 140, mode: Clutter.AnimationMode.EASE_OUT_QUAD });
 
         this._hudDismissId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1800, () => {
             this._hudDismissId = null;
             this._hudBox.ease({
                 opacity: 0,
-                duration: 140,
+                duration: 120,
                 mode: Clutter.AnimationMode.EASE_IN_QUAD,
                 onComplete: () => {
                     this._hudBox.visible = false;
                     this._isHudActive = false;
                     const targetWidth = this._mediaActive ? this._compactMediaWidth : this._idleWidth;
                     if (this._mediaActive) this._compactBox.visible = true;
-                    this._repositionAndResize(targetWidth, this._collapsedHeight, null, 280, Clutter.AnimationMode.EASE_OUT_QUAD);
+                    this._repositionAndResize(targetWidth, this._collapsedHeight, 260, Clutter.AnimationMode.EASE_OUT_QUAD);
                 },
             });
             return GLib.SOURCE_REMOVE;
@@ -883,21 +873,21 @@ export default class DynamicIslandExtension extends Extension {
         this._hudBox.visible = false;
         this._chargingBox.visible = true;
 
-        this._repositionAndResize(this._chargingWidth, this._collapsedHeight, null, 340, Clutter.AnimationMode.EASE_OUT_BACK);
+        this._repositionAndResize(this._chargingWidth, this._collapsedHeight, 340, Clutter.AnimationMode.EASE_OUT_BACK);
         this._chargingBox.ease({ opacity: 255, duration: 180, mode: Clutter.AnimationMode.EASE_OUT_QUAD });
 
         this._chargingDismissId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 3000, () => {
             this._chargingDismissId = null;
             this._chargingBox.ease({
                 opacity: 0,
-                duration: 150,
+                duration: 130,
                 mode: Clutter.AnimationMode.EASE_IN_QUAD,
                 onComplete: () => {
                     this._chargingBox.visible = false;
                     this._isChargingBannerActive = false;
                     const targetWidth = this._mediaActive ? this._compactMediaWidth : this._idleWidth;
                     if (this._mediaActive) this._compactBox.visible = true;
-                    this._repositionAndResize(targetWidth, this._collapsedHeight, null, 300, Clutter.AnimationMode.EASE_OUT_QUAD);
+                    this._repositionAndResize(targetWidth, this._collapsedHeight, 260, Clutter.AnimationMode.EASE_OUT_QUAD);
                 },
             });
             return GLib.SOURCE_REMOVE;
@@ -905,14 +895,23 @@ export default class DynamicIslandExtension extends Extension {
     }
 
     disable() {
-        if (this._origOsdShow) {
-            Main.osdWindowManager.show = this._origOsdShow;
-            this._origOsdShow = null;
+        // 1. Kembalikan Banner Pop-up Bawaan GNOME
+        if (Main.messageTray._bannerBin) {
+            Main.messageTray._bannerBin.show();
         }
+
+        // 2. Kembalikan Setting Notifikasi Bawaan
         if (this._settings) {
             this._settings.set_boolean('show-banners', this._originalShowBanners);
             this._settings = null;
         }
+
+        // 3. Kembalikan OSD Bawaan Sistem
+        if (this._origOsdShow) {
+            Main.osdWindowManager.show = this._origOsdShow;
+            this._origOsdShow = null;
+        }
+
         if (this._monitorsChangedId) Main.layoutManager.disconnect(this._monitorsChangedId);
         if (this._sourceAddedId) Main.messageTray.disconnect(this._sourceAddedId);
         if (this._sourceRemovedId) Main.messageTray.disconnect(this._sourceRemovedId);
