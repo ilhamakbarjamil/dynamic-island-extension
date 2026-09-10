@@ -1,9 +1,21 @@
-/* ================= 1. PILL UTAMA (PURE BLACK OLED - TANPA BAYANGAN KOTAK) ================= */
+/* ================= 1. PILL UTAMA (PURE BLACK OLED) ================= */
 .dynamic-island-pill {
     background-color: #000000;
     border-radius: 36px;
-    /* Border hairline elegan dan presisi mengikuti lengkungan tanpa glitch bayangan */
     border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* ================= 0. JAM DIGITAL IDLE (TENGAH NOTCH) ================= */
+.dynamic-island-idle-box {
+    padding: 0 4px;
+}
+
+.dynamic-island-idle-clock {
+    color: #ffffff;
+    font-size: 0.9em;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    text-align: center;
 }
 
 /* ================= 2. NOTIFIKASI SQUIRCLE ================= */

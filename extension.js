@@ -10,20 +10,19 @@ import { BatteryWatcher } from './battery.js';
 
 export default class DynamicIslandExtension extends Extension {
     enable() {
-        console.log('[DynamicIsland] Mengaktifkan Dynamic Island (Clean OLED Look)...');
+        console.log('[DynamicIsland] Mengaktifkan Dynamic Island (Full Clock Display)...');
 
-        // Matikan Banner Notifikasi Bawaan Sistem
+        // Matikan banner notifikasi bawaan sistem
         this._settings = new Gio.Settings({ schema_id: 'org.gnome.desktop.notifications' });
         this._originalShowBanners = this._settings.get_boolean('show-banners');
         this._settings.set_boolean('show-banners', false);
 
-        // Sembunyikan kontainer banner pop-up bawaan GNOME
         if (Main.messageTray._bannerBin) {
             Main.messageTray._bannerBin.hide();
         }
 
-        // ======== DIMENSI ========
-        this._idleWidth           = 124;
+        // ======== DIMENSI (175px MENUTUPI DND DENGAN SEMPURNA & JAM LEGA) ========
+        this._idleWidth           = 175; 
         this._collapsedHeight     = 35;
         this._compactMediaWidth   = 195;
         this._hudWidth            = 225;
@@ -40,6 +39,7 @@ export default class DynamicIslandExtension extends Extension {
         this._isHudActive = false;
         this._chargingDismissId = null;
         this._hudDismissId = null;
+        this._clockTickId = null;
         this._notificationQueue = [];
         this._isProcessingQueue = false;
         this._currentNotification = null;
@@ -57,7 +57,7 @@ export default class DynamicIslandExtension extends Extension {
             this._reposition(this._getCurrentPillWidth());
         });
 
-        // Pill Utama (clip_to_allocation memastikan konten tidak pernah bocor ke luar)
+        // Pill Utama
         this._island = new St.BoxLayout({
             style_class: 'dynamic-island-pill',
             reactive: true,
@@ -71,6 +71,27 @@ export default class DynamicIslandExtension extends Extension {
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
         });
+
+        // ================= 0. JAM DIGITAL PRESISI (TIDAK AKAN TERPOTONG) =================
+        this._idleClockLabel = new St.Label({
+            style_class: 'dynamic-island-idle-clock',
+            text: this._getFormattedTime(),
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        // KUNCI: Matikan fitur pemotongan teks agar TIDAK menjadi 02:...
+        this._idleClockLabel.clutter_text.ellipsize = 0; // 0 = Pango.EllipsizeMode.NONE
+
+        this._idleBox = new St.Bin({
+            style_class: 'dynamic-island-idle-box',
+            x_expand: true,
+            y_expand: true,
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.CENTER,
+            child: this._idleClockLabel,
+            visible: true,
+            opacity: 255,
+        });
+        this._island.add_child(this._idleBox);
 
         // ================= 1. VOLUME & BRIGHTNESS HUD =================
         this._hudBox = new St.BoxLayout({
@@ -156,7 +177,7 @@ export default class DynamicIslandExtension extends Extension {
         this._chargingBox.add_child(this._chargingRightBox);
         this._island.add_child(this._chargingBox);
 
-        // ================= 3. COMPACT VIEW (MUSIC) =================
+        // ================= 3. COMPACT VIEW (COLLAPSED MUSIC) =================
         this._compactBox = new St.BoxLayout({
             style_class: 'dynamic-island-compact',
             vertical: false,
@@ -389,6 +410,13 @@ export default class DynamicIslandExtension extends Extension {
         Main.uiGroup.add_child(this._island);
         this._reposition(this._idleWidth);
 
+        // Timer Jam Digital (Update setiap detik)
+        this._updateClock();
+        this._clockTickId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
+            this._updateClock();
+            return GLib.SOURCE_CONTINUE;
+        });
+
         // Seekbar Event
         this._progressTrack.connect('button-press-event', (_a, event) => {
             if (!this._currentMedia?.canSeek) return Clutter.EVENT_STOP;
@@ -406,7 +434,7 @@ export default class DynamicIslandExtension extends Extension {
             return Clutter.EVENT_STOP;
         });
 
-        // OSD Hook (Cegat OSD bawaan sistem)
+        // OSD Hook
         this._origOsdShow = Main.osdWindowManager.show.bind(Main.osdWindowManager);
         Main.osdWindowManager.show = (monitorIndex, icon, label, level, maxLevel) => {
             let iconName = '';
@@ -468,10 +496,10 @@ export default class DynamicIslandExtension extends Extension {
         // MPRIS
         this._media = new MediaWatcher(state => this._onMediaUpdate(state));
 
-        // Battery Watcher (Hanya colok charger)
+        // Battery
         this._battery = new BatteryWatcher(event => this._onBatteryEvent(event));
 
-        // Animasi Equalizer
+        // Wave Animation
         this._wavePhase = 0;
         this._waveTickId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 170, () => {
             const playing = this._currentMedia?.status === 'Playing';
@@ -507,6 +535,16 @@ export default class DynamicIslandExtension extends Extension {
             }
             return GLib.SOURCE_CONTINUE;
         });
+    }
+
+    _getFormattedTime() {
+        return GLib.DateTime.new_now_local().format('%H:%M');
+    }
+
+    _updateClock() {
+        if (this._idleClockLabel) {
+            this._idleClockLabel.set_text(this._getFormattedTime());
+        }
     }
 
     _getCurrentPillWidth() {
@@ -581,6 +619,7 @@ export default class DynamicIslandExtension extends Extension {
 
     _expandNotification() {
         this._isExpanded = true;
+        this._idleBox.visible = false;
         this._compactBox.visible = false;
         this._mediaContent.visible = false;
         this._notifBox.visible = true;
@@ -608,6 +647,7 @@ export default class DynamicIslandExtension extends Extension {
         if (this._isExpanded || !this._island) return;
         this._isExpanded = true;
 
+        this._idleBox.visible = false;
         this._compactBox.visible = false;
         this._notifBox.visible = false;
         this._mediaContent.visible = true;
@@ -645,6 +685,14 @@ export default class DynamicIslandExtension extends Extension {
                         duration: 140,
                         mode: Clutter.AnimationMode.EASE_OUT_QUAD,
                     });
+                } else if (!this._mediaActive && !this._isProcessingQueue) {
+                    this._idleBox.visible = true;
+                    this._idleBox.opacity = 0;
+                    this._idleBox.ease({
+                        opacity: 255,
+                        duration: 140,
+                        mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                    });
                 }
             },
         });
@@ -675,6 +723,9 @@ export default class DynamicIslandExtension extends Extension {
                 this._processQueue();
             } else if (this._mediaActive) {
                 this._compactBox.visible = true;
+            } else {
+                this._idleBox.visible = true;
+                this._idleBox.opacity = 255;
             }
             return GLib.SOURCE_REMOVE;
         });
@@ -689,12 +740,15 @@ export default class DynamicIslandExtension extends Extension {
             this._mediaContent.visible = false;
 
             if (!this._isProcessingQueue && !this._isChargingBannerActive && !this._isHudActive) {
+                this._idleBox.visible = true;
+                this._idleBox.opacity = 255;
                 this._collapse();
             }
             return;
         }
 
         this._mediaActive = true;
+        this._idleBox.visible = false;
         this._titleLabel.set_text(state.title || 'Sedang Diputar');
         this._bodyLabel.set_text(state.artist || 'Tidak Diketahui');
         this._loadCoverArt(state.artUrl);
@@ -831,6 +885,7 @@ export default class DynamicIslandExtension extends Extension {
         const trackW = 140;
         this._hudSliderFill.width = isMuted ? 0 : Math.round(trackW * ratio);
 
+        this._idleBox.visible = false;
         this._compactBox.visible = false;
         this._mediaContent.visible = false;
         this._notifBox.visible = false;
@@ -850,7 +905,11 @@ export default class DynamicIslandExtension extends Extension {
                     this._hudBox.visible = false;
                     this._isHudActive = false;
                     const targetWidth = this._mediaActive ? this._compactMediaWidth : this._idleWidth;
-                    if (this._mediaActive) this._compactBox.visible = true;
+                    if (this._mediaActive) {
+                        this._compactBox.visible = true;
+                    } else {
+                        this._idleBox.visible = true;
+                    }
                     this._repositionAndResize(targetWidth, this._collapsedHeight, 260, Clutter.AnimationMode.EASE_OUT_QUAD);
                 },
             });
@@ -867,6 +926,7 @@ export default class DynamicIslandExtension extends Extension {
         this._chargingPercentLabel.set_text(`${percentage}%`);
         this._batteryFill.width = Math.max(2, Math.floor((percentage / 100) * 20));
 
+        this._idleBox.visible = false;
         this._compactBox.visible = false;
         this._mediaContent.visible = false;
         this._notifBox.visible = false;
@@ -886,7 +946,11 @@ export default class DynamicIslandExtension extends Extension {
                     this._chargingBox.visible = false;
                     this._isChargingBannerActive = false;
                     const targetWidth = this._mediaActive ? this._compactMediaWidth : this._idleWidth;
-                    if (this._mediaActive) this._compactBox.visible = true;
+                    if (this._mediaActive) {
+                        this._compactBox.visible = true;
+                    } else {
+                        this._idleBox.visible = true;
+                    }
                     this._repositionAndResize(targetWidth, this._collapsedHeight, 260, Clutter.AnimationMode.EASE_OUT_QUAD);
                 },
             });
@@ -895,21 +959,21 @@ export default class DynamicIslandExtension extends Extension {
     }
 
     disable() {
-        // 1. Kembalikan Banner Pop-up Bawaan GNOME
-        if (Main.messageTray._bannerBin) {
-            Main.messageTray._bannerBin.show();
+        if (this._clockTickId) {
+            GLib.source_remove(this._clockTickId);
+            this._clockTickId = null;
         }
 
-        // 2. Kembalikan Setting Notifikasi Bawaan
+        if (this._origOsdShow) {
+            Main.osdWindowManager.show = this._origOsdShow;
+            this._origOsdShow = null;
+        }
         if (this._settings) {
             this._settings.set_boolean('show-banners', this._originalShowBanners);
             this._settings = null;
         }
-
-        // 3. Kembalikan OSD Bawaan Sistem
-        if (this._origOsdShow) {
-            Main.osdWindowManager.show = this._origOsdShow;
-            this._origOsdShow = null;
+        if (Main.messageTray._bannerBin) {
+            Main.messageTray._bannerBin.show();
         }
 
         if (this._monitorsChangedId) Main.layoutManager.disconnect(this._monitorsChangedId);
