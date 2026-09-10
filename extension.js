@@ -8,11 +8,13 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { MediaWatcher } from './mpris.js';
 import { BatteryWatcher } from './battery.js';
 import { BluetoothWatcher } from './bluetooth.js';
+import { PrivacyWatcher } from './privacy.js';
 
 export default class DynamicIslandExtension extends Extension {
     enable() {
-        console.log('[DynamicIsland] Mengaktifkan Dynamic Island (Lengkap dengan Bluetooth & Jam)...');
+        console.log('[DynamicIsland] Mengaktifkan Dynamic Island...');
 
+        // Matikan banner notifikasi bawaan sistem
         this._settings = new Gio.Settings({ schema_id: 'org.gnome.desktop.notifications' });
         this._originalShowBanners = this._settings.get_boolean('show-banners');
         this._settings.set_boolean('show-banners', false);
@@ -22,12 +24,12 @@ export default class DynamicIslandExtension extends Extension {
         }
 
         // ======== DIMENSI ========
-        this._idleWidth           = 175; // Menutup DND & wadah jam lega
+        this._idleWidth           = 175;
         this._collapsedHeight     = 35;
         this._compactMediaWidth   = 195;
         this._hudWidth            = 225;
         this._chargingWidth       = 235;
-        this._bluetoothWidth      = 260; // Lebar pop-up AirPods / Bluetooth
+        this._bluetoothWidth      = 260;
 
         this._notifWidth          = 370;
         this._notifHeight         = 68;
@@ -75,24 +77,61 @@ export default class DynamicIslandExtension extends Extension {
             y_align: Clutter.ActorAlign.CENTER,
         });
 
+        // ================= PRIVACY INDICATOR DOTS CONTAINER =================
+        this._privacyBox = new St.BoxLayout({
+            style_class: 'dynamic-island-privacy-box',
+            vertical: false,
+            x_align: Clutter.ActorAlign.END,
+            y_align: Clutter.ActorAlign.CENTER,
+            visible: false,
+        });
+
+        this._cameraDot = new St.Widget({
+            style_class: 'dynamic-island-privacy-dot dot-camera',
+            visible: false,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        this._micDot = new St.Widget({
+            style_class: 'dynamic-island-privacy-dot dot-mic',
+            visible: false,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        this._privacyBox.add_child(this._cameraDot);
+        this._privacyBox.add_child(this._micDot);
+
         // ================= 0. JAM DIGITAL IDLE =================
         this._idleClockLabel = new St.Label({
             style_class: 'dynamic-island-idle-clock',
             text: this._getFormattedTime(),
             y_align: Clutter.ActorAlign.CENTER,
+            x_align: Clutter.ActorAlign.CENTER,
         });
-        this._idleClockLabel.clutter_text.ellipsize = 0; // Tanpa potongan titik-titik
+        this._idleClockLabel.clutter_text.ellipsize = 0;
 
-        this._idleBox = new St.Bin({
+        this._idleLeftSpacer = new St.Widget({
+            style_class: 'dynamic-island-idle-spacer',
+        });
+
+        this._idleBox = new St.BoxLayout({
             style_class: 'dynamic-island-idle-box',
+            vertical: false,
+            x_expand: true,
+            y_expand: true,
+            visible: true,
+            opacity: 255,
+        });
+
+        this._idleBox.add_child(this._idleLeftSpacer);
+        this._idleBox.add_child(new St.Bin({
             x_expand: true,
             y_expand: true,
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
             child: this._idleClockLabel,
-            visible: true,
-            opacity: 255,
-        });
+        }));
+        this._idleBox.add_child(this._privacyBox);
         this._island.add_child(this._idleBox);
 
         // ================= 1. BLUETOOTH / AIRPODS VIEW =================
@@ -351,7 +390,6 @@ export default class DynamicIslandExtension extends Extension {
             reactive: true,
         });
 
-        // Top Row
         this._topRow = new St.BoxLayout({
             style_class: 'dynamic-island-media-top-row',
             vertical: false,
@@ -412,7 +450,6 @@ export default class DynamicIslandExtension extends Extension {
         this._topRow.add_child(this._headerWaveBox);
         this._mediaContent.add_child(this._topRow);
 
-        // Progress Section
         this._progressSection = new St.BoxLayout({
             style_class: 'dynamic-island-progress-section',
             vertical: true,
@@ -490,7 +527,7 @@ export default class DynamicIslandExtension extends Extension {
         Main.uiGroup.add_child(this._island);
         this._reposition(this._idleWidth);
 
-        // Update Jam Setiap Detik
+        // Update Jam
         this._updateClock();
         this._clockTickId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
             this._updateClock();
@@ -533,20 +570,6 @@ export default class DynamicIslandExtension extends Extension {
             this._origOsdShow(monitorIndex, icon, label, level, maxLevel);
         };
 
-        // ================= SHORTCUT KLIK MOUSE UNTUK TES =================
-        this._island.connect('button-press-event', (_actor, event) => {
-            const btn = event.get_button();
-            if (btn === 2) { // KLIK RODA TENGAH MOUSE => TES POP-UP AIRPODS
-                this._onBluetoothConnected({
-                    name: 'AirPods Pro',
-                    icon: 'audio-headphones-symbolic',
-                    battery: 82,
-                });
-                return Clutter.EVENT_STOP;
-            }
-            return Clutter.EVENT_PROPAGATE;
-        });
-
         // Hover
         this._island.connect('notify::hover', () => {
             if (this._isChargingBannerActive || this._isHudActive || this._isBtBannerActive) return;
@@ -587,14 +610,11 @@ export default class DynamicIslandExtension extends Extension {
         this._sourceAddedId = Main.messageTray.connect('source-added', (_t, s) => this._connectSource(s));
         this._sourceRemovedId = Main.messageTray.connect('source-removed', (_t, s) => this._disconnectSource(s));
 
-        // MPRIS
+        // Subsystems
         this._media = new MediaWatcher(state => this._onMediaUpdate(state));
-
-        // Battery
         this._battery = new BatteryWatcher(event => this._onBatteryEvent(event));
-
-        // Bluetooth
         this._bluetooth = new BluetoothWatcher(event => this._onBluetoothConnected(event));
+        this._privacy = new PrivacyWatcher(state => this._onPrivacyState(state));
 
         // Wave Animation
         this._wavePhase = 0;
@@ -634,6 +654,13 @@ export default class DynamicIslandExtension extends Extension {
         });
     }
 
+    _onPrivacyState({ camera, mic }) {
+        this._cameraDot.visible = camera;
+        this._micDot.visible = mic;
+        this._privacyBox.visible = (camera || mic);
+        this._idleLeftSpacer.visible = (camera || mic);
+    }
+
     _getFormattedTime() {
         return GLib.DateTime.new_now_local().format('%H:%M');
     }
@@ -644,7 +671,6 @@ export default class DynamicIslandExtension extends Extension {
         }
     }
 
-    // ================= BLUETOOTH / AIRPODS POP-UP =================
     _onBluetoothConnected({ name, icon, battery }) {
         if (this._btDismissId) {
             GLib.source_remove(this._btDismissId);
@@ -652,7 +678,6 @@ export default class DynamicIslandExtension extends Extension {
         }
 
         this._isBtBannerActive = true;
-
         this._btNameLabel.set_text(name || 'Bluetooth Device');
         this._btIcon.icon_name = icon || 'audio-headphones-symbolic';
 
@@ -672,7 +697,6 @@ export default class DynamicIslandExtension extends Extension {
             this._btStatusLabel.visible = true;
         }
 
-        // Sembunyikan elemen lain
         this._idleBox.visible = false;
         this._compactBox.visible = false;
         this._mediaContent.visible = false;
@@ -681,7 +705,6 @@ export default class DynamicIslandExtension extends Extension {
         this._notifBox.visible = false;
         this._bluetoothBox.visible = true;
 
-        // Meregangkan Dynamic Island ala AirPods
         this._repositionAndResize(this._bluetoothWidth, this._collapsedHeight, 320, Clutter.AnimationMode.EASE_OUT_BACK);
 
         this._bluetoothBox.ease({
@@ -690,7 +713,6 @@ export default class DynamicIslandExtension extends Extension {
             mode: Clutter.AnimationMode.EASE_OUT_QUAD,
         });
 
-        // Bertahan selama 2.8 detik
         this._btDismissId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2800, () => {
             this._btDismissId = null;
             this._dismissBluetoothBanner();
@@ -744,7 +766,6 @@ export default class DynamicIslandExtension extends Extension {
         });
     }
 
-    // ================= NOTIFIKASI =================
     _connectSource(source) {
         if (this._sourceConnections.has(source)) return;
         const id = source.connect('notification-added', (_s, n) => this._onNotification(n));
@@ -815,7 +836,6 @@ export default class DynamicIslandExtension extends Extension {
         });
     }
 
-    // ================= MEDIA PLAYER =================
     _expandMedia() {
         if (this._isExpanded || !this._island) return;
         this._isExpanded = true;
@@ -996,7 +1016,6 @@ export default class DynamicIslandExtension extends Extension {
         this._compactIcon.icon_name = iconName || 'audio-x-generic-symbolic';
     }
 
-    // ================= PROGRESS BAR & SEEK =================
     _formatTime(micros) {
         const sec = Math.max(0, Math.floor(micros / 1_000_000));
         const m = Math.floor(sec / 60);
@@ -1037,7 +1056,6 @@ export default class DynamicIslandExtension extends Extension {
         this._media?.seek(target);
     }
 
-    // ================= HUD & CHARGING =================
     _showOsdInIsland({ icon, iconName, level, maxLevel, isVolume }) {
         if (this._hudDismissId) GLib.source_remove(this._hudDismissId);
 
@@ -1172,6 +1190,7 @@ export default class DynamicIslandExtension extends Extension {
         if (this._waveTickId) GLib.source_remove(this._waveTickId);
         if (this._progressTickId) GLib.source_remove(this._progressTickId);
 
+        if (this._privacy) this._privacy.destroy();
         if (this._bluetooth) this._bluetooth.destroy();
         if (this._battery) this._battery.destroy();
         if (this._media) this._media.destroy();

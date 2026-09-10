@@ -276,3 +276,34 @@
     font-size: 0.82em;
     font-weight: 700;
 }
+
+
+/* ================= 7. PRIVACY INDICATOR DOTS (IPHONE STYLE) ================= */
+.dynamic-island-privacy-box {
+    spacing: 5px;
+    padding-right: 14px;
+    min-width: 24px;
+}
+
+.dynamic-island-idle-spacer {
+    min-width: 24px;
+    padding-left: 14px;
+}
+
+.dynamic-island-privacy-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+}
+
+/* Kamera Aktif: Hijau Neon khas iOS */
+.dynamic-island-privacy-dot.dot-camera {
+    background-color: #30d158;
+    box-shadow: 0 0 7px #30d158;
+}
+
+/* Mikrofon Merekam: Oranye Neon khas iOS */
+.dynamic-island-privacy-dot.dot-mic {
+    background-color: #ff9f0a;
+    box-shadow: 0 0 7px #ff9f0a;
+}
