@@ -9,12 +9,12 @@ import { MediaWatcher } from './mpris.js';
 import { BatteryWatcher } from './battery.js';
 import { BluetoothWatcher } from './bluetooth.js';
 import { PrivacyWatcher } from './privacy.js';
+import { TimerManager } from './timer.js';
 
 export default class DynamicIslandExtension extends Extension {
     enable() {
-        console.log('[DynamicIsland] Mengaktifkan Dynamic Island...');
+        console.log('[DynamicIsland] Mengaktifkan Dynamic Island (iOS Authentic Preset Tiles)...');
 
-        // Matikan banner notifikasi bawaan sistem
         this._settings = new Gio.Settings({ schema_id: 'org.gnome.desktop.notifications' });
         this._originalShowBanners = this._settings.get_boolean('show-banners');
         this._settings.set_boolean('show-banners', false);
@@ -27,23 +27,30 @@ export default class DynamicIslandExtension extends Extension {
         this._idleWidth           = 175;
         this._collapsedHeight     = 35;
         this._compactMediaWidth   = 195;
+        this._compactTimerWidth   = 185;
         this._hudWidth            = 225;
         this._chargingWidth       = 235;
         this._bluetoothWidth      = 260;
+        this._timerAlertWidth     = 240;
 
         this._notifWidth          = 370;
         this._notifHeight         = 68;
         this._mediaExpandedWidth  = 385;
         this._mediaExpandedHeight = 168;
+        this._timerExpandedWidth  = 385;
+        this._timerExpandedHeight = 135; // Saat timer aktif berjalan
+        this._timerPresetHeight   = 106; // Ramping & padat saat memilih preset (tanpa ruang kosong!)
 
         // ======== STATE ========
         this._isExpanded = false;
         this._isChargingBannerActive = false;
         this._isHudActive = false;
         this._isBtBannerActive = false;
+        this._isTimerAlertActive = false;
         this._chargingDismissId = null;
         this._hudDismissId = null;
         this._btDismissId = null;
+        this._timerAlertDismissId = null;
         this._clockTickId = null;
         this._notificationQueue = [];
         this._isProcessingQueue = false;
@@ -77,7 +84,7 @@ export default class DynamicIslandExtension extends Extension {
             y_align: Clutter.ActorAlign.CENTER,
         });
 
-        // ================= PRIVACY INDICATOR DOTS CONTAINER =================
+        // ================= PRIVACY INDICATOR DOTS =================
         this._privacyBox = new St.BoxLayout({
             style_class: 'dynamic-island-privacy-box',
             vertical: false,
@@ -85,19 +92,16 @@ export default class DynamicIslandExtension extends Extension {
             y_align: Clutter.ActorAlign.CENTER,
             visible: false,
         });
-
         this._cameraDot = new St.Widget({
             style_class: 'dynamic-island-privacy-dot dot-camera',
             visible: false,
             y_align: Clutter.ActorAlign.CENTER,
         });
-
         this._micDot = new St.Widget({
             style_class: 'dynamic-island-privacy-dot dot-mic',
             visible: false,
             y_align: Clutter.ActorAlign.CENTER,
         });
-
         this._privacyBox.add_child(this._cameraDot);
         this._privacyBox.add_child(this._micDot);
 
@@ -122,7 +126,6 @@ export default class DynamicIslandExtension extends Extension {
             visible: true,
             opacity: 255,
         });
-
         this._idleBox.add_child(this._idleLeftSpacer);
         this._idleBox.add_child(new St.Bin({
             x_expand: true,
@@ -134,6 +137,67 @@ export default class DynamicIslandExtension extends Extension {
         this._idleBox.add_child(this._privacyBox);
         this._island.add_child(this._idleBox);
 
+        // ================= 0B. COMPACT TIMER =================
+        this._compactTimerBox = new St.BoxLayout({
+            style_class: 'dynamic-island-compact-timer',
+            vertical: false,
+            x_expand: true,
+            y_expand: true,
+            reactive: false,
+            visible: false,
+        });
+
+        this._compactTimerIconBin = new St.Bin({
+            style_class: 'dynamic-island-compact-timer-icon-bin',
+            x_align: Clutter.ActorAlign.START,
+            y_align: Clutter.ActorAlign.CENTER,
+            child: new St.Icon({
+                icon_name: 'alarm-symbolic',
+                icon_size: 13,
+                style_class: 'dynamic-island-compact-timer-icon',
+            }),
+        });
+
+        this._compactTimerLabel = new St.Label({
+            style_class: 'dynamic-island-compact-timer-label',
+            text: '00:00',
+            y_align: Clutter.ActorAlign.CENTER,
+            x_align: Clutter.ActorAlign.END,
+            x_expand: true,
+        });
+        this._compactTimerLabel.clutter_text.ellipsize = 0;
+        this._compactTimerLabel.clutter_text.single_line_mode = true;
+
+        this._compactTimerBox.add_child(this._compactTimerIconBin);
+        this._compactTimerBox.add_child(this._compactTimerLabel);
+        this._island.add_child(this._compactTimerBox);
+
+        // ================= 0C. TIMER ALERT FINISHED =================
+        this._timerAlertBox = new St.BoxLayout({
+            style_class: 'dynamic-island-timer-alert-box',
+            vertical: false,
+            x_expand: true,
+            y_expand: true,
+            reactive: false,
+            visible: false,
+            opacity: 0,
+        });
+        this._timerAlertIcon = new St.Icon({
+            icon_name: 'alarm-symbolic',
+            icon_size: 16,
+            style_class: 'dynamic-island-timer-alert-icon',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._timerAlertLabel = new St.Label({
+            style_class: 'dynamic-island-timer-alert-label',
+            text: 'Timer Selesai!',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._timerAlertLabel.clutter_text.ellipsize = 0;
+        this._timerAlertBox.add_child(this._timerAlertIcon);
+        this._timerAlertBox.add_child(this._timerAlertLabel);
+        this._island.add_child(this._timerAlertBox);
+
         // ================= 1. BLUETOOTH / AIRPODS VIEW =================
         this._bluetoothBox = new St.BoxLayout({
             style_class: 'dynamic-island-bt-box',
@@ -144,7 +208,6 @@ export default class DynamicIslandExtension extends Extension {
             visible: false,
             opacity: 0,
         });
-
         this._btIcon = new St.Icon({
             icon_size: 16,
             icon_name: 'audio-headphones-symbolic',
@@ -156,7 +219,6 @@ export default class DynamicIslandExtension extends Extension {
             y_align: Clutter.ActorAlign.CENTER,
             child: this._btIcon,
         });
-
         this._btNameLabel = new St.Label({
             style_class: 'dynamic-island-bt-name',
             text: 'AirPods Pro',
@@ -171,14 +233,12 @@ export default class DynamicIslandExtension extends Extension {
             x_align: Clutter.ActorAlign.END,
             y_align: Clutter.ActorAlign.CENTER,
         });
-
         this._btPercentLabel = new St.Label({
             style_class: 'dynamic-island-bt-percent',
             text: '100%',
             y_align: Clutter.ActorAlign.CENTER,
             visible: false,
         });
-
         this._btBatteryShell = new St.Widget({
             style_class: 'dynamic-island-battery-shell',
             y_align: Clutter.ActorAlign.CENTER,
@@ -201,12 +261,10 @@ export default class DynamicIslandExtension extends Extension {
             text: 'Connected',
             y_align: Clutter.ActorAlign.CENTER,
         });
-
         this._btRightBox.add_child(this._btStatusLabel);
         this._btRightBox.add_child(this._btPercentLabel);
         this._btRightBox.add_child(this._btBatteryShell);
         this._btRightBox.add_child(this._btBatteryCap);
-
         this._bluetoothBox.add_child(this._btIconBin);
         this._bluetoothBox.add_child(this._btNameLabel);
         this._bluetoothBox.add_child(this._btRightBox);
@@ -487,12 +545,10 @@ export default class DynamicIslandExtension extends Extension {
         });
         this._timeRow.add_child(this._timeLabel);
         this._timeRow.add_child(this._durationLabel);
-
         this._progressSection.add_child(this._progressTrack);
         this._progressSection.add_child(this._timeRow);
         this._mediaContent.add_child(this._progressSection);
 
-        // Bottom Controls
         this._controlsRow = new St.BoxLayout({
             style_class: 'dynamic-island-controls-row',
             vertical: false,
@@ -522,17 +578,192 @@ export default class DynamicIslandExtension extends Extension {
         this._controlsRow.add_child(this._playBtn);
         this._controlsRow.add_child(this._nextBtn);
         this._mediaContent.add_child(this._controlsRow);
-
         this._island.add_child(this._mediaContent);
+
+        // ================= 7. EXPANDED TIMER (DESAIN PRESISI IOS) =================
+        this._timerExpandedBox = new St.BoxLayout({
+            style_class: 'dynamic-island-timer-expanded',
+            vertical: true,
+            x_expand: true,
+            y_expand: true,
+            visible: false,
+            opacity: 0,
+            reactive: true,
+        });
+
+        // 7A. Tampilan Countdown Sedang Berjalan
+        this._timerRunningView = new St.BoxLayout({
+            style_class: 'dynamic-island-timer-running-view',
+            vertical: true,
+            x_expand: true,
+            visible: false,
+        });
+
+        this._timerTopRow = new St.BoxLayout({
+            style_class: 'dynamic-island-timer-top-row',
+            vertical: false,
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        this._timerTextCol = new St.BoxLayout({
+            style_class: 'dynamic-island-timer-text-col',
+            vertical: true,
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._timerSubLabel = new St.Label({
+            style_class: 'dynamic-island-timer-sub-label',
+            text: 'TIMER',
+        });
+        this._timerBigLabel = new St.Label({
+            style_class: 'dynamic-island-timer-big-label',
+            text: '00:00',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._timerBigLabel.clutter_text.ellipsize = 0;
+        this._timerBigLabel.clutter_text.single_line_mode = true;
+
+        this._timerTextCol.add_child(this._timerSubLabel);
+        this._timerTextCol.add_child(this._timerBigLabel);
+
+        this._timerActionsCol = new St.BoxLayout({
+            style_class: 'dynamic-island-timer-actions-col',
+            vertical: false,
+            x_align: Clutter.ActorAlign.END,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        this._timerCancelBtn = new St.Button({
+            style_class: 'dynamic-island-timer-circle-btn cancel',
+            child: new St.Icon({ icon_name: 'window-close-symbolic', icon_size: 16 }),
+            can_focus: true,
+            reactive: true,
+        });
+
+        this._timerPauseIcon = new St.Icon({ icon_name: 'media-playback-pause-symbolic', icon_size: 18 });
+        this._timerPauseBtn = new St.Button({
+            style_class: 'dynamic-island-timer-circle-btn pause',
+            child: this._timerPauseIcon,
+            can_focus: true,
+            reactive: true,
+        });
+
+        this._timerActionsCol.add_child(this._timerCancelBtn);
+        this._timerActionsCol.add_child(this._timerPauseBtn);
+
+        this._timerTopRow.add_child(this._timerTextCol);
+        this._timerTopRow.add_child(this._timerActionsCol);
+
+        this._timerProgressBar = new St.Widget({
+            style_class: 'dynamic-island-timer-bar-track',
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._timerProgressFill = new St.Widget({
+            style_class: 'dynamic-island-timer-bar-fill',
+            x_align: Clutter.ActorAlign.START,
+            y_align: Clutter.ActorAlign.FILL,
+        });
+        this._timerProgressBar.add_child(this._timerProgressFill);
+
+        this._timerRunningView.add_child(this._timerTopRow);
+        this._timerRunningView.add_child(this._timerProgressBar);
+
+        // 7B. Tampilan Preset Cepat (UBIN FROSTED GLASS KONTROL CENTER)
+        this._timerPresetView = new St.BoxLayout({
+            style_class: 'dynamic-island-timer-preset-view',
+            vertical: true,
+            x_expand: true,
+            y_expand: true,
+            visible: false,
+        });
+
+        this._timerPresetHeader = new St.BoxLayout({
+            style_class: 'dynamic-island-preset-header',
+            vertical: false,
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._timerPresetIcon = new St.Icon({
+            icon_name: 'alarm-symbolic',
+            icon_size: 13,
+            style_class: 'dynamic-island-preset-header-icon',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._timerPresetTitle = new St.Label({
+            style_class: 'dynamic-island-timer-preset-title',
+            text: 'QUICK TIMER',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        // Kunci: Matikan pemotongan teks header
+        this._timerPresetTitle.clutter_text.ellipsize = 0;
+        this._timerPresetTitle.clutter_text.single_line_mode = true;
+
+        this._timerPresetHeader.add_child(this._timerPresetIcon);
+        this._timerPresetHeader.add_child(this._timerPresetTitle);
+
+        this._timerPresetRow = new St.BoxLayout({
+            style_class: 'dynamic-island-preset-row',
+            vertical: false,
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._preset5Btn = new St.Button({
+            style_class: 'dynamic-island-preset-tile',
+            child: new St.Label({ text: '5m' }),
+            can_focus: true,
+            x_expand: true,
+        });
+        this._preset15Btn = new St.Button({
+            style_class: 'dynamic-island-preset-tile',
+            child: new St.Label({ text: '15m' }),
+            can_focus: true,
+            x_expand: true,
+        });
+        this._preset25Btn = new St.Button({
+            style_class: 'dynamic-island-preset-tile pomodoro',
+            child: new St.Label({ text: '25m Pomodoro' }),
+            can_focus: true,
+            x_expand: true,
+        });
+        this._timerPresetRow.add_child(this._preset5Btn);
+        this._timerPresetRow.add_child(this._preset15Btn);
+        this._timerPresetRow.add_child(this._preset25Btn);
+
+        this._timerPresetView.add_child(this._timerPresetHeader);
+        this._timerPresetView.add_child(this._timerPresetRow);
+
+        this._timerExpandedBox.add_child(this._timerRunningView);
+        this._timerExpandedBox.add_child(this._timerPresetView);
+        this._island.add_child(this._timerExpandedBox);
+
         Main.uiGroup.add_child(this._island);
         this._reposition(this._idleWidth);
 
-        // Update Jam
+        // Update Jam Standby
         this._updateClock();
         this._clockTickId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
             this._updateClock();
             return GLib.SOURCE_CONTINUE;
         });
+
+        // Timer Manager
+        this._timer = new TimerManager({
+            onTick: data => this._onTimerTick(data),
+            onFinished: () => this._onTimerFinished(),
+            onStateChange: state => this._onTimerStateChange(state),
+        });
+
+        this._preset5Btn.connect('clicked', () => this._timer.start(5 * 60));
+        this._preset15Btn.connect('clicked', () => this._timer.start(15 * 60));
+        this._preset25Btn.connect('clicked', () => this._timer.start(25 * 60));
+
+        this._timerCancelBtn.connect('clicked', () => {
+            this._timer.stop();
+            this._collapse();
+        });
+        this._timerPauseBtn.connect('clicked', () => this._timer.togglePause());
 
         // Seekbar Event
         this._progressTrack.connect('button-press-event', (_a, event) => {
@@ -570,23 +801,26 @@ export default class DynamicIslandExtension extends Extension {
             this._origOsdShow(monitorIndex, icon, label, level, maxLevel);
         };
 
-        // Hover
+        // Hover Handler
         this._island.connect('notify::hover', () => {
-            if (this._isChargingBannerActive || this._isHudActive || this._isBtBannerActive) return;
+            if (this._isChargingBannerActive || this._isHudActive || this._isBtBannerActive || this._isTimerAlertActive) return;
             const hovering = this._island.hover;
-            const hasContent = this._notificationQueue.length > 0 || this._isProcessingQueue || this._mediaActive;
 
             if (hovering) {
                 if (this._unhoverTimeoutId) {
                     GLib.source_remove(this._unhoverTimeoutId);
                     this._unhoverTimeoutId = null;
                 }
-                if (hasContent && !this._isExpanded && !this._isProcessingQueue) {
-                    this._expandMedia();
+                if (!this._isExpanded && !this._isProcessingQueue) {
+                    if (this._mediaActive) {
+                        this._expandMedia();
+                    } else {
+                        this._expandTimer();
+                    }
                 }
             } else {
                 if (this._isExpanded && !this._isDraggingSeek) {
-                    this._unhoverTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 220, () => {
+                    this._unhoverTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 240, () => {
                         this._unhoverTimeoutId = null;
                         if (this._isProcessingQueue && this._waitingForMouseLeave) {
                             this._waitingForMouseLeave = false;
@@ -620,7 +854,7 @@ export default class DynamicIslandExtension extends Extension {
         this._wavePhase = 0;
         this._waveTickId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 170, () => {
             const playing = this._currentMedia?.status === 'Playing';
-            if (this._mediaActive && playing && !this._isChargingBannerActive && !this._isHudActive && !this._isBtBannerActive) {
+            if (this._mediaActive && playing && !this._isChargingBannerActive && !this._isHudActive && !this._isBtBannerActive && !this._isTimerAlertActive) {
                 const patterns = [8, 16, 22, 11, 19, 7];
                 this._wavePhase = (this._wavePhase + 1) % patterns.length;
 
@@ -645,12 +879,115 @@ export default class DynamicIslandExtension extends Extension {
             return GLib.SOURCE_CONTINUE;
         });
 
-        // Progress Bar
+        // Progress Bar Media
         this._progressTickId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1000, () => {
             if (this._mediaActive && this._currentMedia?.status === 'Playing' && this._isExpanded && !this._isDraggingSeek) {
                 this._updateProgressUI();
             }
             return GLib.SOURCE_CONTINUE;
+        });
+    }
+
+    // ================= TIMER CONTROLLER =================
+    _onTimerTick({ formatted, ratio, isPaused }) {
+        this._compactTimerLabel.set_text(formatted);
+        this._timerBigLabel.set_text(formatted);
+
+        const trackW = 345;
+        this._timerProgressFill.width = Math.max(0, Math.floor(trackW * ratio));
+
+        if (isPaused) {
+            this._timerPauseIcon.icon_name = 'media-playback-start-symbolic';
+        } else {
+            this._timerPauseIcon.icon_name = 'media-playback-pause-symbolic';
+        }
+    }
+
+    _onTimerStateChange({ isRunning }) {
+        if (isRunning) {
+            this._timerRunningView.visible = true;
+            this._timerPresetView.visible = false;
+            if (!this._isExpanded && !this._mediaActive) {
+                this._idleBox.visible = false;
+                this._compactTimerBox.visible = true;
+                this._repositionAndResize(this._compactTimerWidth, this._collapsedHeight);
+            }
+        } else {
+            this._timerRunningView.visible = false;
+            this._timerPresetView.visible = true;
+            this._compactTimerBox.visible = false;
+            if (!this._isExpanded && !this._mediaActive) {
+                this._idleBox.visible = true;
+                this._repositionAndResize(this._idleWidth, this._collapsedHeight);
+            }
+        }
+    }
+
+    _onTimerFinished() {
+        if (this._timerAlertDismissId) GLib.source_remove(this._timerAlertDismissId);
+
+        try {
+            global.display?.get_sound_player?.()?.play_from_theme?.('alarm-clock-elapsed', 'Timer', null);
+        } catch (_) {}
+
+        this._isTimerAlertActive = true;
+        this._idleBox.visible = false;
+        this._compactBox.visible = false;
+        this._compactTimerBox.visible = false;
+        this._mediaContent.visible = false;
+        this._timerExpandedBox.visible = false;
+        this._timerAlertBox.visible = true;
+
+        this._repositionAndResize(this._timerAlertWidth, this._collapsedHeight, 340, Clutter.AnimationMode.EASE_OUT_BACK);
+        this._timerAlertBox.ease({ opacity: 255, duration: 180, mode: Clutter.AnimationMode.EASE_OUT_QUAD });
+
+        this._timerAlertDismissId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 4000, () => {
+            this._timerAlertDismissId = null;
+            this._timerAlertBox.ease({
+                opacity: 0,
+                duration: 140,
+                mode: Clutter.AnimationMode.EASE_IN_QUAD,
+                onComplete: () => {
+                    this._timerAlertBox.visible = false;
+                    this._isTimerAlertActive = false;
+                    if (this._mediaActive) {
+                        this._compactBox.visible = true;
+                        this._repositionAndResize(this._compactMediaWidth, this._collapsedHeight);
+                    } else {
+                        this._idleBox.visible = true;
+                        this._repositionAndResize(this._idleWidth, this._collapsedHeight);
+                    }
+                },
+            });
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    // TAMPILKAN CARD: DENGAN TINGGI DINAMIS RAMPING
+    _expandTimer() {
+        if (this._isExpanded || !this._island) return;
+        this._isExpanded = true;
+
+        this._idleBox.visible = false;
+        this._compactBox.visible = false;
+        this._compactTimerBox.visible = false;
+        this._mediaContent.visible = false;
+        this._notifBox.visible = false;
+        this._timerExpandedBox.visible = true;
+
+        const isRunning = this._timer.isActive;
+        this._timerRunningView.visible = isRunning;
+        this._timerPresetView.visible = !isRunning;
+
+        // KUNCI: Ketinggian dinamis 106px untuk Preset (padat & pas tanpa ruang kosong), 135px untuk Timer berjalan
+        const targetHeight = isRunning ? this._timerExpandedHeight : this._timerPresetHeight;
+
+        this._repositionAndResize(this._timerExpandedWidth, targetHeight, 320, Clutter.AnimationMode.EASE_OUT_BACK);
+        this._timerExpandedBox.ease({
+            opacity: 255,
+            duration: 190,
+            delay: 40,
+            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
         });
     }
 
@@ -699,19 +1036,16 @@ export default class DynamicIslandExtension extends Extension {
 
         this._idleBox.visible = false;
         this._compactBox.visible = false;
+        this._compactTimerBox.visible = false;
         this._mediaContent.visible = false;
         this._chargingBox.visible = false;
         this._hudBox.visible = false;
         this._notifBox.visible = false;
+        this._timerExpandedBox.visible = false;
         this._bluetoothBox.visible = true;
 
         this._repositionAndResize(this._bluetoothWidth, this._collapsedHeight, 320, Clutter.AnimationMode.EASE_OUT_BACK);
-
-        this._bluetoothBox.ease({
-            opacity: 255,
-            duration: 180,
-            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-        });
+        this._bluetoothBox.ease({ opacity: 255, duration: 180, mode: Clutter.AnimationMode.EASE_OUT_QUAD });
 
         this._btDismissId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2800, () => {
             this._btDismissId = null;
@@ -732,6 +1066,9 @@ export default class DynamicIslandExtension extends Extension {
                 if (this._mediaActive) {
                     this._compactBox.visible = true;
                     this._repositionAndResize(this._compactMediaWidth, this._collapsedHeight, 260, Clutter.AnimationMode.EASE_OUT_QUAD);
+                } else if (this._timer.isActive) {
+                    this._compactTimerBox.visible = true;
+                    this._repositionAndResize(this._compactTimerWidth, this._collapsedHeight, 260, Clutter.AnimationMode.EASE_OUT_QUAD);
                 } else {
                     this._idleBox.visible = true;
                     this._repositionAndResize(this._idleWidth, this._collapsedHeight, 260, Clutter.AnimationMode.EASE_OUT_QUAD);
@@ -741,11 +1078,17 @@ export default class DynamicIslandExtension extends Extension {
     }
 
     _getCurrentPillWidth() {
+        if (this._isTimerAlertActive) return this._timerAlertWidth;
         if (this._isBtBannerActive) return this._bluetoothWidth;
         if (this._isHudActive) return this._hudWidth;
         if (this._isChargingBannerActive) return this._chargingWidth;
-        if (this._isExpanded) return this._isProcessingQueue ? this._notifWidth : this._mediaExpandedWidth;
+        if (this._isExpanded) {
+            if (this._isProcessingQueue) return this._notifWidth;
+            if (this._mediaActive) return this._mediaExpandedWidth;
+            return this._timerExpandedWidth;
+        }
         if (this._mediaActive) return this._compactMediaWidth;
+        if (this._timer?.isActive) return this._compactTimerWidth;
         return this._idleWidth;
     }
 
@@ -785,7 +1128,7 @@ export default class DynamicIslandExtension extends Extension {
     }
 
     _processQueue() {
-        if (this._isProcessingQueue || this._notificationQueue.length === 0 || this._isChargingBannerActive || this._isHudActive || this._isBtBannerActive) return;
+        if (this._isProcessingQueue || this._notificationQueue.length === 0 || this._isChargingBannerActive || this._isHudActive || this._isBtBannerActive || this._isTimerAlertActive) return;
 
         this._isProcessingQueue = true;
         this._currentNotification = this._notificationQueue.shift();
@@ -814,18 +1157,14 @@ export default class DynamicIslandExtension extends Extension {
         this._isExpanded = true;
         this._idleBox.visible = false;
         this._compactBox.visible = false;
+        this._compactTimerBox.visible = false;
         this._mediaContent.visible = false;
         this._bluetoothBox.visible = false;
+        this._timerExpandedBox.visible = false;
         this._notifBox.visible = true;
 
         this._repositionAndResize(this._notifWidth, this._notifHeight, 320, Clutter.AnimationMode.EASE_OUT_BACK);
-
-        this._notifBox.ease({
-            opacity: 255,
-            duration: 180,
-            delay: 40,
-            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-        });
+        this._notifBox.ease({ opacity: 255, duration: 180, delay: 40, mode: Clutter.AnimationMode.EASE_OUT_QUAD });
 
         if (this._autoCollapseId) GLib.source_remove(this._autoCollapseId);
         this._autoCollapseId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 4200, () => {
@@ -842,19 +1181,14 @@ export default class DynamicIslandExtension extends Extension {
 
         this._idleBox.visible = false;
         this._compactBox.visible = false;
+        this._compactTimerBox.visible = false;
         this._notifBox.visible = false;
         this._bluetoothBox.visible = false;
+        this._timerExpandedBox.visible = false;
         this._mediaContent.visible = true;
 
         this._repositionAndResize(this._mediaExpandedWidth, this._mediaExpandedHeight, 320, Clutter.AnimationMode.EASE_OUT_BACK);
-
-        this._mediaContent.ease({
-            opacity: 255,
-            duration: 200,
-            delay: 60,
-            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-        });
-
+        this._mediaContent.ease({ opacity: 255, duration: 200, delay: 60, mode: Clutter.AnimationMode.EASE_OUT_QUAD });
         this._updateProgressUI();
     }
 
@@ -862,31 +1196,29 @@ export default class DynamicIslandExtension extends Extension {
         if (!this._isExpanded && this._island.width === this._getCurrentPillWidth()) return;
         this._isExpanded = false;
 
-        const targetWidth = this._mediaActive ? this._compactMediaWidth : this._idleWidth;
+        let targetWidth = this._idleWidth;
+        if (this._mediaActive) targetWidth = this._compactMediaWidth;
+        else if (this._timer?.isActive) targetWidth = this._compactTimerWidth;
 
         this._mediaContent.ease({
             opacity: 0,
-            duration: 90,
+            duration: 80,
             mode: Clutter.AnimationMode.EASE_OUT_QUAD,
             onComplete: () => {
                 this._mediaContent.visible = false;
                 this._notifBox.visible = false;
+                this._timerExpandedBox.visible = false;
+
                 if (this._mediaActive && !this._isProcessingQueue && !this._isChargingBannerActive && !this._isHudActive && !this._isBtBannerActive) {
                     this._compactBox.visible = true;
                     this._compactBox.opacity = 0;
-                    this._compactBox.ease({
-                        opacity: 255,
-                        duration: 140,
-                        mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-                    });
+                    this._compactBox.ease({ opacity: 255, duration: 140, mode: Clutter.AnimationMode.EASE_OUT_QUAD });
+                } else if (this._timer.isActive && !this._isProcessingQueue) {
+                    this._compactTimerBox.visible = true;
                 } else if (!this._mediaActive && !this._isProcessingQueue) {
                     this._idleBox.visible = true;
                     this._idleBox.opacity = 0;
-                    this._idleBox.ease({
-                        opacity: 255,
-                        duration: 140,
-                        mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-                    });
+                    this._idleBox.ease({ opacity: 255, duration: 140, mode: Clutter.AnimationMode.EASE_OUT_QUAD });
                 }
             },
         });
@@ -897,7 +1229,7 @@ export default class DynamicIslandExtension extends Extension {
     _collapseAndNext() {
         this._notifBox.ease({
             opacity: 0,
-            duration: 90,
+            duration: 80,
             mode: Clutter.AnimationMode.EASE_OUT_QUAD,
             onComplete: () => {
                 this._notifBox.visible = false;
@@ -905,7 +1237,10 @@ export default class DynamicIslandExtension extends Extension {
         });
 
         this._isExpanded = false;
-        const targetWidth = this._mediaActive ? this._compactMediaWidth : this._idleWidth;
+        let targetWidth = this._idleWidth;
+        if (this._mediaActive) targetWidth = this._compactMediaWidth;
+        else if (this._timer?.isActive) targetWidth = this._compactTimerWidth;
+
         this._repositionAndResize(targetWidth, this._collapsedHeight, 260, Clutter.AnimationMode.EASE_OUT_QUAD);
 
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, 280, () => {
@@ -917,6 +1252,8 @@ export default class DynamicIslandExtension extends Extension {
                 this._processQueue();
             } else if (this._mediaActive) {
                 this._compactBox.visible = true;
+            } else if (this._timer.isActive) {
+                this._compactTimerBox.visible = true;
             } else {
                 this._idleBox.visible = true;
                 this._idleBox.opacity = 255;
@@ -934,8 +1271,12 @@ export default class DynamicIslandExtension extends Extension {
             this._mediaContent.visible = false;
 
             if (!this._isProcessingQueue && !this._isChargingBannerActive && !this._isHudActive && !this._isBtBannerActive) {
-                this._idleBox.visible = true;
-                this._idleBox.opacity = 255;
+                if (this._timer?.isActive) {
+                    this._compactTimerBox.visible = true;
+                } else {
+                    this._idleBox.visible = true;
+                    this._idleBox.opacity = 255;
+                }
                 this._collapse();
             }
             return;
@@ -943,6 +1284,7 @@ export default class DynamicIslandExtension extends Extension {
 
         this._mediaActive = true;
         this._idleBox.visible = false;
+        this._compactTimerBox.visible = false;
         this._titleLabel.set_text(state.title || 'Sedang Diputar');
         this._bodyLabel.set_text(state.artist || 'Tidak Diketahui');
         this._loadCoverArt(state.artUrl);
@@ -1030,7 +1372,7 @@ export default class DynamicIslandExtension extends Extension {
 
         const pos = this._media?.getPosition() ?? 0;
         const ratio = Math.max(0, Math.min(1, pos / duration));
-        const trackW = this._progressTrack.width || 330;
+        const trackW = 330;
         const fillW = Math.floor(trackW * ratio);
 
         this._progressFill.width = Math.max(0, fillW);
@@ -1079,10 +1421,12 @@ export default class DynamicIslandExtension extends Extension {
 
         this._idleBox.visible = false;
         this._compactBox.visible = false;
+        this._compactTimerBox.visible = false;
         this._mediaContent.visible = false;
         this._notifBox.visible = false;
         this._chargingBox.visible = false;
         this._bluetoothBox.visible = false;
+        this._timerExpandedBox.visible = false;
         this._hudBox.visible = true;
 
         this._repositionAndResize(this._hudWidth, this._collapsedHeight, 280, Clutter.AnimationMode.EASE_OUT_BACK);
@@ -1097,12 +1441,10 @@ export default class DynamicIslandExtension extends Extension {
                 onComplete: () => {
                     this._hudBox.visible = false;
                     this._isHudActive = false;
-                    const targetWidth = this._mediaActive ? this._compactMediaWidth : this._idleWidth;
-                    if (this._mediaActive) {
-                        this._compactBox.visible = true;
-                    } else {
-                        this._idleBox.visible = true;
-                    }
+                    const targetWidth = this._getCurrentPillWidth();
+                    if (this._mediaActive) this._compactBox.visible = true;
+                    else if (this._timer?.isActive) this._compactTimerBox.visible = true;
+                    else this._idleBox.visible = true;
                     this._repositionAndResize(targetWidth, this._collapsedHeight, 260, Clutter.AnimationMode.EASE_OUT_QUAD);
                 },
             });
@@ -1121,10 +1463,12 @@ export default class DynamicIslandExtension extends Extension {
 
         this._idleBox.visible = false;
         this._compactBox.visible = false;
+        this._compactTimerBox.visible = false;
         this._mediaContent.visible = false;
         this._notifBox.visible = false;
         this._hudBox.visible = false;
         this._bluetoothBox.visible = false;
+        this._timerExpandedBox.visible = false;
         this._chargingBox.visible = true;
 
         this._repositionAndResize(this._chargingWidth, this._collapsedHeight, 340, Clutter.AnimationMode.EASE_OUT_BACK);
@@ -1139,12 +1483,10 @@ export default class DynamicIslandExtension extends Extension {
                 onComplete: () => {
                     this._chargingBox.visible = false;
                     this._isChargingBannerActive = false;
-                    const targetWidth = this._mediaActive ? this._compactMediaWidth : this._idleWidth;
-                    if (this._mediaActive) {
-                        this._compactBox.visible = true;
-                    } else {
-                        this._idleBox.visible = true;
-                    }
+                    const targetWidth = this._getCurrentPillWidth();
+                    if (this._mediaActive) this._compactBox.visible = true;
+                    else if (this._timer?.isActive) this._compactTimerBox.visible = true;
+                    else this._idleBox.visible = true;
                     this._repositionAndResize(targetWidth, this._collapsedHeight, 260, Clutter.AnimationMode.EASE_OUT_QUAD);
                 },
             });
@@ -1160,6 +1502,10 @@ export default class DynamicIslandExtension extends Extension {
         if (this._btDismissId) {
             GLib.source_remove(this._btDismissId);
             this._btDismissId = null;
+        }
+        if (this._timerAlertDismissId) {
+            GLib.source_remove(this._timerAlertDismissId);
+            this._timerAlertDismissId = null;
         }
 
         if (this._origOsdShow) {
@@ -1190,6 +1536,7 @@ export default class DynamicIslandExtension extends Extension {
         if (this._waveTickId) GLib.source_remove(this._waveTickId);
         if (this._progressTickId) GLib.source_remove(this._progressTickId);
 
+        if (this._timer) this._timer.destroy();
         if (this._privacy) this._privacy.destroy();
         if (this._bluetooth) this._bluetooth.destroy();
         if (this._battery) this._battery.destroy();
