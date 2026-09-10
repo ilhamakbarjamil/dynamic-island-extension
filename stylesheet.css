@@ -171,3 +171,32 @@
     background-color: #30d158;
     border-radius: 0 1px 1px 0;
 }
+
+/* ======== VOLUME & BRIGHTNESS HUD (IPHONE IDENTICAL) ======== */
+.dynamic-island-hud-box {
+    padding: 0 16px;
+    spacing: 14px;
+}
+
+.dynamic-island-hud-icon {
+    color: #ffffff;
+}
+
+/* Saat di-mute, ikon berubah menjadi merah khas Apple */
+.dynamic-island-hud-icon-muted {
+    color: #ff453a !important;
+}
+
+/* Kapsul Slider Horizontal */
+.dynamic-island-hud-track {
+    height: 7px;
+    background-color: rgba(255, 255, 255, 0.22);
+    border-radius: 999px;
+    width: 140px;
+}
+
+.dynamic-island-hud-fill {
+    height: 7px;
+    background-color: #ffffff;
+    border-radius: 999px;
+}
