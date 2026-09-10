@@ -9,17 +9,18 @@ import { MediaWatcher } from './mpris.js';
 
 export default class DynamicIslandExtension extends Extension {
     enable() {
-        console.log('[DynamicIsland] ===== ENABLE DIPANGGIL =====');
+        console.log('[DynamicIsland] Mengaktifkan Dynamic Island...');
 
         this._settings = new Gio.Settings({ schema_id: 'org.gnome.desktop.notifications' });
         this._originalShowBanners = this._settings.get_boolean('show-banners');
         this._settings.set_boolean('show-banners', false);
 
-        // ======== DIMENSI ========
-        this._collapsedWidth  = 140;
-        this._collapsedHeight = 34;
-        this._expandedWidth   = 400;
-        this._expandedHeight  = 108;
+        // ======== UKURAN UKURAN ========
+        this._idleWidth       = 124; // Ukuran pill idle (seperti punch-hole iPhone)
+        this._compactWidth    = 190; // Ukuran saat compact play music (art di kiri + wave di kanan)
+        this._collapsedHeight = 35;
+        this._expandedWidth   = 380;
+        this._expandedHeight  = 112;
 
         // ======== STATE ========
         this._isExpanded = false;
@@ -28,34 +29,80 @@ export default class DynamicIslandExtension extends Extension {
         this._currentNotification = null;
         this._waitingForMouseLeave = false;
         this._autoCollapseId = null;
+        this._unhoverTimeoutId = null;
         this._currentMedia = null;
         this._mediaActive = false;
-        this._isVisible = false;
-
-        // Progress bar state
-        this._progressTickId = null;
         this._isDraggingSeek = false;
+        this._coverCache = new Map();
 
         // ======== MONITOR ========
         this._monitor = Main.layoutManager.primaryMonitor;
         this._monitorsChangedId = Main.layoutManager.connect('monitors-changed', () => {
             this._monitor = Main.layoutManager.primaryMonitor;
-            this._reposition(this._isExpanded ? this._expandedWidth : this._collapsedWidth);
+            this._reposition(this._getCurrentPillWidth());
         });
 
-        // ======== PILL ========
+        // ======== PILL UTAMA ========
         this._island = new St.BoxLayout({
             style_class: 'dynamic-island-pill',
             reactive: true,
             track_hover: true,
-            visible: false,
-            opacity: 0,
-            width: this._collapsedWidth,
+            visible: true,
+            opacity: 255,
+            width: this._idleWidth,
             height: this._collapsedHeight,
             vertical: false,
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.CENTER,
         });
 
-        // ======== KONTEN (vertikal: top row + progress row) ========
+        // ======== 1. COMPACT VIEW (Tampilan saat menciut ala iPhone) ========
+        this._compactBox = new St.BoxLayout({
+            style_class: 'dynamic-island-compact',
+            vertical: false,
+            x_expand: true,
+            y_expand: true,
+            reactive: false,
+            visible: false,
+        });
+
+        // Mini Art di sisi kiri
+        this._compactIcon = new St.Icon({
+            icon_size: 18,
+            icon_name: 'audio-x-generic-symbolic',
+        });
+        this._compactArtBin = new St.Bin({
+            style_class: 'dynamic-island-compact-art',
+            x_align: Clutter.ActorAlign.START,
+            y_align: Clutter.ActorAlign.CENTER,
+            child: this._compactIcon,
+        });
+
+        // Equalizer Waveform di sisi kanan
+        this._waveBars = [];
+        this._waveBox = new St.BoxLayout({
+            style_class: 'dynamic-island-wave',
+            vertical: false,
+            x_align: Clutter.ActorAlign.END,
+            y_align: Clutter.ActorAlign.CENTER,
+            x_expand: true,
+        });
+        for (let i = 0; i < 4; i++) {
+            const bar = new St.Widget({
+                style_class: 'dynamic-island-wave-bar',
+                width: 3,
+                height: 6,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            this._waveBars.push(bar);
+            this._waveBox.add_child(bar);
+        }
+
+        this._compactBox.add_child(this._compactArtBin);
+        this._compactBox.add_child(this._waveBox);
+        this._island.add_child(this._compactBox);
+
+        // ======== 2. EXPANDED VIEW (Tampilan detail saat membesar) ========
         this._content = new St.BoxLayout({
             style_class: 'dynamic-island-content',
             vertical: true,
@@ -63,26 +110,25 @@ export default class DynamicIslandExtension extends Extension {
             visible: false,
             x_expand: true,
             y_expand: true,
-            reactive: false,
+            reactive: true,
         });
 
-        // ---------- TOP ROW ----------
+        // Top Row
         this._topRow = new St.BoxLayout({
             style_class: 'dynamic-island-top-row',
             vertical: false,
             x_expand: true,
-            reactive: false,
+            reactive: true,
         });
 
         this._icon = new St.Icon({
-            icon_size: 40,
+            icon_size: 42,
             icon_name: 'dialog-information-symbolic',
         });
         this._iconBin = new St.Bin({
             style_class: 'dynamic-island-cover-art',
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
-            reactive: false,
             child: this._icon,
         });
         this._topRow.add_child(this._iconBin);
@@ -92,7 +138,6 @@ export default class DynamicIslandExtension extends Extension {
             vertical: true,
             x_expand: true,
             y_align: Clutter.ActorAlign.CENTER,
-            reactive: false,
         });
         this._titleLabel = new St.Label({
             style_class: 'dynamic-island-title',
@@ -110,36 +155,46 @@ export default class DynamicIslandExtension extends Extension {
         this._textInfo.add_child(this._bodyLabel);
         this._topRow.add_child(this._textInfo);
 
-        // Tombol aksi
+        // Tombol Aksi Player
         this._actionBox = new St.BoxLayout({
             style_class: 'dynamic-island-actions',
             vertical: false,
             x_align: Clutter.ActorAlign.END,
             y_align: Clutter.ActorAlign.CENTER,
-            reactive: false,
+            reactive: true,
+        });
+        this._prevBtn = new St.Button({
+            style_class: 'dynamic-island-btn',
+            child: new St.Icon({ icon_name: 'media-skip-backward-symbolic', icon_size: 13 }),
+            can_focus: true,
+            reactive: true,
         });
         this._playBtn = new St.Button({
-            style_class: 'dynamic-island-btn',
-            child: new St.Icon({ icon_name: 'media-playback-pause-symbolic', icon_size: 14 }),
+            style_class: 'dynamic-island-btn dynamic-island-btn-play',
+            child: new St.Icon({ icon_name: 'media-playback-start-symbolic', icon_size: 15 }),
             can_focus: true,
+            reactive: true,
         });
         this._nextBtn = new St.Button({
             style_class: 'dynamic-island-btn',
-            child: new St.Icon({ icon_name: 'media-skip-forward-symbolic', icon_size: 14 }),
+            child: new St.Icon({ icon_name: 'media-skip-forward-symbolic', icon_size: 13 }),
             can_focus: true,
+            reactive: true,
         });
+
+        this._actionBox.add_child(this._prevBtn);
         this._actionBox.add_child(this._playBtn);
         this._actionBox.add_child(this._nextBtn);
         this._topRow.add_child(this._actionBox);
 
         this._content.add_child(this._topRow);
 
-        // ---------- PROGRESS ROW ----------
+        // Progress Seekbar Row
         this._progressRow = new St.BoxLayout({
             style_class: 'dynamic-island-progress-row',
             vertical: false,
             x_expand: true,
-            reactive: false,
+            reactive: true,
         });
 
         this._timeLabel = new St.Label({
@@ -183,7 +238,7 @@ export default class DynamicIslandExtension extends Extension {
         this._progressRow.add_child(this._durationLabel);
         this._content.add_child(this._progressRow);
 
-        // Seek handler
+        // Event Seekbar
         this._progressTrack.connect('button-press-event', (_a, event) => {
             if (!this._currentMedia?.canSeek) return Clutter.EVENT_STOP;
             this._isDraggingSeek = true;
@@ -201,150 +256,109 @@ export default class DynamicIslandExtension extends Extension {
         });
 
         this._island.add_child(this._content);
-
-        // ======== WAVE ========
-        this._waveBars = [];
-        this._waveBox = new St.BoxLayout({
-            style_class: 'dynamic-island-wave',
-            vertical: false,
-            x_align: Clutter.ActorAlign.CENTER,
-            y_align: Clutter.ActorAlign.CENTER,
-            visible: false,
-            reactive: false,
-        });
-        for (let i = 0; i < 4; i++) {
-            const bar = new St.Widget({
-                style_class: 'dynamic-island-wave-bar',
-                width: 3, height: 6,
-                y_align: Clutter.ActorAlign.CENTER,
-                reactive: false,
-            });
-            this._waveBars.push(bar);
-            this._waveBox.add_child(bar);
-        }
-        this._island.add_child(this._waveBox);
-
         Main.uiGroup.add_child(this._island);
 
-        // Paksa initial layout pass
-        this._island.queue_relayout();
-        this._reposition(this._collapsedWidth);
-        this._island.queue_relayout();
+        // Posisi Awal Langsung Muncul
+        this._reposition(this._idleWidth);
 
-        // ======== HOVER ========
+        // ======== HOVER INTERACTION DENGAN DEBOUNCE ========
         this._island.connect('notify::hover', () => {
             const hovering = this._island.hover;
-            const hasContent = this._notificationQueue.length > 0
-                || this._isProcessingQueue
-                || this._mediaActive;
+            const hasContent = this._notificationQueue.length > 0 || this._isProcessingQueue || this._mediaActive;
 
-            if (hovering && hasContent) {
-                this._expand();
-            } else if (!hovering) {
-                if (this._isProcessingQueue && this._waitingForMouseLeave) {
-                    this._waitingForMouseLeave = false;
-                    this._collapseAndNext();
-                } else if (!this._isProcessingQueue) {
-                    this._collapse();
+            if (hovering) {
+                if (this._unhoverTimeoutId) {
+                    GLib.source_remove(this._unhoverTimeoutId);
+                    this._unhoverTimeoutId = null;
+                }
+                if (hasContent && !this._isExpanded) {
+                    this._expand();
+                }
+            } else {
+                if (this._isExpanded && !this._isDraggingSeek) {
+                    // Berikan toleransi 250ms agar tidak mudah tertutup tidak sengaja
+                    this._unhoverTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
+                        this._unhoverTimeoutId = null;
+                        if (this._isProcessingQueue && this._waitingForMouseLeave) {
+                            this._waitingForMouseLeave = false;
+                            this._collapseAndNext();
+                        } else {
+                            this._collapse();
+                        }
+                        return GLib.SOURCE_REMOVE;
+                    });
                 }
             }
         });
 
-        this._island.connect('motion-event', () => {
-            if (this._island.hover) {
-                const hasContent = this._notificationQueue.length > 0
-                    || this._isProcessingQueue
-                    || this._mediaActive;
-                if (hasContent && !this._isExpanded) this._expand();
+        this._island.connect('button-release-event', () => {
+            if (this._currentNotification) {
+                this._onIslandClicked();
+                return Clutter.EVENT_STOP;
             }
             return Clutter.EVENT_PROPAGATE;
         });
 
-        this._island.connect('button-release-event', () => {
-            if (this._currentNotification) this._onIslandClicked();
-            return Clutter.EVENT_STOP;
-        });
-
+        // Kontrol Tombol Media
+        this._prevBtn.connect('clicked', () => this._media?.previous());
         this._playBtn.connect('clicked', () => this._media?.togglePlayPause());
         this._nextBtn.connect('clicked', () => this._media?.next());
 
-        // ======== NOTIFIKASI ========
+        // ======== NOTIFIKASI SHELL ========
         this._sourceConnections = new Map();
         Main.messageTray.getSources().forEach(s => this._connectSource(s));
-        this._sourceAddedId = Main.messageTray.connect('source-added', (_t, s) => {
-            this._connectSource(s);
-        });
-        this._sourceRemovedId = Main.messageTray.connect('source-removed', (_t, s) => {
-            this._disconnectSource(s);
-        });
+        this._sourceAddedId = Main.messageTray.connect('source-added', (_t, s) => this._connectSource(s));
+        this._sourceRemovedId = Main.messageTray.connect('source-removed', (_t, s) => this._disconnectSource(s));
 
-        // ======== MPRIS ========
-        console.log('[DynamicIsland] Inisialisasi MPRIS watcher...');
+        // ======== MPRIS MEDIA WATCHER ========
         this._media = new MediaWatcher(state => this._onMediaUpdate(state));
-        console.log('[DynamicIsland] MediaWatcher selesai dibuat');
 
-        // ======== WAVE TIMER ========
+        // ======== ANIMASI WAVEFORM COMPACT ========
         this._wavePhase = 0;
-        this._waveTickId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 220, () => {
+        this._waveTickId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 180, () => {
             const playing = this._currentMedia?.status === 'Playing';
-            if (!this._isExpanded && this._mediaActive && playing && this._isVisible) {
-                const patterns = [10, 18, 26, 14, 22, 8];
+            if (!this._isExpanded && this._mediaActive && playing) {
+                const patterns = [8, 16, 22, 12, 19, 6];
                 this._wavePhase = (this._wavePhase + 1) % patterns.length;
                 this._waveBars.forEach((bar, i) => {
                     bar.ease({
                         height: patterns[(this._wavePhase + i) % patterns.length],
-                        duration: 200,
+                        duration: 160,
                         mode: Clutter.AnimationMode.EASE_IN_OUT_SINE,
                     });
                 });
+            } else if (!playing) {
+                this._waveBars.forEach(bar => bar.set_height(4));
             }
             return GLib.SOURCE_CONTINUE;
         });
 
-        // ======== PROGRESS TICKER ========
+        // ======== PROGRESS BAR TICKER ========
         this._progressTickId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1000, () => {
-            if (this._mediaActive
-                && this._currentMedia?.status === 'Playing'
-                && this._isExpanded
-                && !this._isDraggingSeek) {
+            if (this._mediaActive && this._currentMedia?.status === 'Playing' && this._isExpanded && !this._isDraggingSeek) {
                 this._updateProgressUI();
             }
             return GLib.SOURCE_CONTINUE;
         });
 
-        // ======== Fallback refresh ========
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
-            if (this._media) this._media.refresh();
+        // Refresh status media awal
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
+            this._media?.refresh();
             return GLib.SOURCE_REMOVE;
         });
     }
 
-    // ================= VISIBILITY =================
-    _showIsland() {
-        if (!this._island || this._isVisible) return;
-        this._isVisible = true;
-        this._island.visible = true;
-        this._island.queue_relayout();
-        this._island.opacity = 255;
+    _getCurrentPillWidth() {
+        if (this._isExpanded) return this._expandedWidth;
+        if (this._mediaActive) return this._compactWidth;
+        return this._idleWidth;
     }
 
-    _hideIsland() {
-        if (!this._island || !this._isVisible) return;
-        this._isVisible = false;
-        this._island.opacity = 0;
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 200, () => {
-            if (!this._isVisible && this._island) this._island.visible = false;
-            return GLib.SOURCE_REMOVE;
-        });
-    }
-
-    // ================= REPOSITION =================
-    _reposition(currentWidth) {
+    _reposition(width) {
         if (!this._island || !this._monitor) return;
-        const x = this._monitor.x + Math.floor((this._monitor.width - currentWidth) / 2);
-        const y = this._monitor.y + 6;
+        const x = this._monitor.x + Math.floor((this._monitor.width - width) / 2);
+        const y = this._monitor.y + 7; // Posisi notch menempel di atas
         this._island.set_position(x, y);
-        this._island.queue_relayout();
     }
 
     // ================= NOTIFIKASI =================
@@ -374,14 +388,13 @@ export default class DynamicIslandExtension extends Extension {
         this._waitingForMouseLeave = false;
 
         const n = this._currentNotification;
-        this._titleLabel.set_text(n.title || 'Pesan Baru');
+        this._titleLabel.set_text(n.title || 'Notifikasi');
         this._bodyLabel.set_text(n.body || '');
 
         if (n.gicon)          this._setIcon({ gicon: n.gicon });
         else if (n.icon_name) this._setIcon({ iconName: n.icon_name });
         else                  this._setIcon({ iconName: 'dialog-information-symbolic' });
 
-        this._showIsland();
         this._actionBox.visible = false;
         this._progressRow.visible = false;
 
@@ -391,49 +404,51 @@ export default class DynamicIslandExtension extends Extension {
     _setIcon({ gicon = null, iconName = null, pixbuf = null }) {
         this._icon.gicon = null;
         this._icon.icon_name = null;
+        this._compactIcon.gicon = null;
+        this._compactIcon.icon_name = null;
+
         if (gicon) {
             this._icon.gicon = gicon;
+            this._compactIcon.gicon = gicon;
         } else if (pixbuf) {
             try {
                 const [ok, buffer] = pixbuf.save_to_bufferv('png', [], []);
                 if (ok) {
-                    const bytes = GLib.Bytes.new(buffer);
-                    this._icon.gicon = Gio.BytesIcon.new(bytes);
-                } else {
-                    this._icon.icon_name = 'audio-x-generic-symbolic';
+                    const bytesIcon = Gio.BytesIcon.new(GLib.Bytes.new(buffer));
+                    this._icon.gicon = bytesIcon;
+                    this._compactIcon.gicon = bytesIcon;
                 }
-            } catch (e) {
+            } catch (_) {
                 this._icon.icon_name = 'audio-x-generic-symbolic';
+                this._compactIcon.icon_name = 'audio-x-generic-symbolic';
             }
         } else if (iconName) {
             this._icon.icon_name = iconName;
-        } else {
-            this._icon.icon_name = 'dialog-information-symbolic';
+            this._compactIcon.icon_name = iconName;
         }
     }
 
     // ================= MEDIA =================
     _onMediaUpdate(state) {
-        console.log('[DynamicIsland] Media:', JSON.stringify(state));
         this._currentMedia = state;
 
+        // Jika player ditutup atau status Stopped
         if (!state || state.status === 'Stopped') {
             this._mediaActive = false;
-            this._waveBox.visible = false;
+            this._compactBox.visible = false;
             this._actionBox.visible = false;
             this._progressRow.visible = false;
+
+            // Jangan sembunyikan pulau! Kembalikan ke mode Idle pill
             if (!this._isProcessingQueue) {
-                this._hideIsland();
                 this._collapse();
             }
             return;
         }
 
         this._mediaActive = true;
-        this._showIsland();
-
-        this._titleLabel.set_text(state.title || 'Sedang diputar');
-        this._bodyLabel.set_text(state.artist || '');
+        this._titleLabel.set_text(state.title || 'Sedang Diputar');
+        this._bodyLabel.set_text(state.artist || 'Tidak Diketahui');
         this._loadCoverArt(state.artUrl);
 
         const playIcon = state.status === 'Playing'
@@ -441,15 +456,16 @@ export default class DynamicIslandExtension extends Extension {
             : 'media-playback-start-symbolic';
         this._playBtn.child.icon_name = playIcon;
 
-        this._waveBox.visible = !this._isExpanded && !this._isProcessingQueue;
-        this._actionBox.visible = this._isExpanded && !this._isProcessingQueue;
+        // Kontrol keterlihatan tampilan compact
+        if (!this._isExpanded && !this._isProcessingQueue) {
+            this._compactBox.visible = true;
+            this._repositionAndResize(this._compactWidth, this._collapsedHeight);
+        }
 
-        // Progress row
-        if (state.length > 0) {
-            this._progressRow.visible = true;
+        if (this._isExpanded) {
+            this._actionBox.visible = !this._isProcessingQueue;
+            this._progressRow.visible = (state.length > 0) && !this._isProcessingQueue;
             this._updateProgressUI();
-        } else {
-            this._progressRow.visible = false;
         }
     }
 
@@ -463,18 +479,18 @@ export default class DynamicIslandExtension extends Extension {
                 const path = Gio.File.new_for_uri(url).get_path();
                 const pb = GdkPixbuf.Pixbuf.new_from_file_at_scale(path, 96, 96, true);
                 this._setIcon({ pixbuf: pb });
-            } catch (e) {
+            } catch (_) {
                 this._setIcon({ iconName: 'audio-x-generic-symbolic' });
             }
             return;
         }
-        this._coverCache ??= new Map();
+
         if (this._coverCache.has(url)) {
             this._setIcon({ pixbuf: this._coverCache.get(url) });
             return;
         }
-        this._setIcon({ iconName: 'audio-x-generic-symbolic' });
 
+        this._setIcon({ iconName: 'audio-x-generic-symbolic' });
         const file = Gio.File.new_for_uri(url);
         file.load_contents_async(null, (f, res) => {
             try {
@@ -485,7 +501,7 @@ export default class DynamicIslandExtension extends Extension {
                 if (this._currentMedia?.artUrl === url) {
                     this._setIcon({ pixbuf: pb });
                 }
-            } catch (e) { /* placeholder tetap */ }
+            } catch (_) {}
         });
     }
 
@@ -508,8 +524,7 @@ export default class DynamicIslandExtension extends Extension {
 
         const pos = this._media?.getPosition() ?? 0;
         const ratio = Math.max(0, Math.min(1, pos / duration));
-
-        const trackW = this._progressTrack.width || 220;
+        const trackW = this._progressTrack.width || 210;
         const fillW = Math.floor(trackW * ratio);
 
         this._progressFill.width = Math.max(0, fillW);
@@ -523,7 +538,8 @@ export default class DynamicIslandExtension extends Extension {
         const duration = this._currentMedia?.length || 0;
         if (duration <= 0) return;
 
-        const [x] = event.get_coords();
+        const coords = event.get_coords();
+        const x = coords[0] !== undefined ? coords[0] : 0;
         const [trackX] = this._progressTrack.get_transformed_position();
         const trackW = this._progressTrack.width || 1;
 
@@ -538,14 +554,25 @@ export default class DynamicIslandExtension extends Extension {
         this._media?.seek(target);
     }
 
-    // ================= EKSPANSI =================
+    // ================= ANIMASI EKSPANSI & PENCIUTAN =================
+    _repositionAndResize(targetWidth, targetHeight, duration = 300, mode = Clutter.AnimationMode.EASE_OUT_BACK) {
+        const targetX = this._monitor.x + Math.floor((this._monitor.width - targetWidth) / 2);
+        this._island.ease({
+            width: targetWidth,
+            height: targetHeight,
+            x: targetX,
+            duration,
+            mode,
+        });
+    }
+
     _triggerAutoExpand() {
         if (this._autoCollapseId) {
             GLib.source_remove(this._autoCollapseId);
             this._autoCollapseId = null;
         }
         this._expand();
-        this._autoCollapseId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 4000, () => {
+        this._autoCollapseId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 4200, () => {
             this._autoCollapseId = null;
             if (this._island.hover) this._waitingForMouseLeave = true;
             else                    this._collapseAndNext();
@@ -557,67 +584,59 @@ export default class DynamicIslandExtension extends Extension {
         if (this._isExpanded || !this._island) return;
         this._isExpanded = true;
 
-        const newX = this._monitor.x + Math.floor((this._monitor.width - this._expandedWidth) / 2);
-
-        this._island.ease({
-            width: this._expandedWidth,
-            height: this._expandedHeight,
-            x: newX,
-            duration: 300,
-            mode: Clutter.AnimationMode.EASE_OUT_BACK,
-        });
+        this._compactBox.visible = false;
+        this._repositionAndResize(this._expandedWidth, this._expandedHeight, 320, Clutter.AnimationMode.EASE_OUT_BACK);
 
         this._content.visible = true;
         this._content.ease({
             opacity: 255,
             duration: 200,
-            delay: 60,
+            delay: 70,
             mode: Clutter.AnimationMode.EASE_OUT_QUAD,
         });
 
-        this._waveBox.visible = false;
         if (this._mediaActive && !this._isProcessingQueue) {
             this._actionBox.visible = true;
             this._progressRow.visible = this._currentMedia?.length > 0;
+            this._updateProgressUI();
         }
-        if (this._mediaActive) this._updateProgressUI();
     }
 
     _collapse() {
-        if (!this._isExpanded || !this._island) return;
+        if (!this._isExpanded && this._island.width === this._getCurrentPillWidth()) return;
         this._isExpanded = false;
 
-        const newX = this._monitor.x + Math.floor((this._monitor.width - this._collapsedWidth) / 2);
-
-        this._island.ease({
-            width: this._collapsedWidth,
-            height: this._collapsedHeight,
-            x: newX,
-            duration: 300,
-            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-        });
+        const targetWidth = this._mediaActive ? this._compactWidth : this._idleWidth;
 
         this._content.ease({
             opacity: 0,
-            duration: 150,
+            duration: 140,
             mode: Clutter.AnimationMode.EASE_IN_QUAD,
-            onComplete: () => { this._content.visible = false; },
+            onComplete: () => {
+                this._content.visible = false;
+                this._actionBox.visible = false;
+                this._progressRow.visible = false;
+                if (this._mediaActive && !this._isProcessingQueue) {
+                    this._compactBox.visible = true;
+                }
+            },
         });
 
-        this._actionBox.visible = false;
-        this._progressRow.visible = false;
-        if (this._mediaActive && !this._isProcessingQueue) this._waveBox.visible = true;
+        this._repositionAndResize(targetWidth, this._collapsedHeight, 300, Clutter.AnimationMode.EASE_OUT_QUAD);
     }
 
     _collapseAndNext() {
         this._collapse();
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 380, () => {
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 320, () => {
             this._isProcessingQueue = false;
             this._waitingForMouseLeave = false;
             this._currentNotification = null;
-            this._processQueue();
-            if (!this._isProcessingQueue && this._mediaActive) {
-                this._waveBox.visible = !this._isExpanded;
+
+            if (this._notificationQueue.length > 0) {
+                this._processQueue();
+            } else if (this._mediaActive) {
+                // Restore tampilan media jika ada
+                this._onMediaUpdate(this._currentMedia);
             }
             return GLib.SOURCE_REMOVE;
         });
@@ -651,32 +670,20 @@ export default class DynamicIslandExtension extends Extension {
             Main.messageTray.disconnect(this._sourceRemovedId);
             this._sourceRemovedId = null;
         }
-        for (const [source, id] of this._sourceConnections)
+        for (const [source, id] of this._sourceConnections) {
             try { source.disconnect(id); } catch (_) {}
+        }
         this._sourceConnections.clear();
 
-        if (this._autoCollapseId) {
-            GLib.source_remove(this._autoCollapseId);
-            this._autoCollapseId = null;
-        }
-        if (this._waveTickId) {
-            GLib.source_remove(this._waveTickId);
-            this._waveTickId = null;
-        }
-        if (this._progressTickId) {
-            GLib.source_remove(this._progressTickId);
-            this._progressTickId = null;
-        }
+        if (this._autoCollapseId) GLib.source_remove(this._autoCollapseId);
+        if (this._unhoverTimeoutId) GLib.source_remove(this._unhoverTimeoutId);
+        if (this._waveTickId) GLib.source_remove(this._waveTickId);
+        if (this._progressTickId) GLib.source_remove(this._progressTickId);
+
         if (this._media) {
             this._media.destroy();
             this._media = null;
         }
-
-        this._notificationQueue = [];
-        this._isProcessingQueue = false;
-        this._waitingForMouseLeave = false;
-        this._currentNotification = null;
-        this._coverCache = null;
 
         if (this._island) {
             this._island.destroy();

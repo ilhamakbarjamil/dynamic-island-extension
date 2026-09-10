@@ -13,40 +13,35 @@ export class MediaWatcher {
         this._busName = null;
         this._propsProxy = null;
         this._signalId = null;
-        this._nameOwnerId = null;
 
         this._nameOwnerId = this._bus.signal_subscribe(
-            'org.freedesktop.DBus', 'org.freedesktop.DBus',
-            'NameOwnerChanged', '/org/freedesktop/DBus',
-            null, Gio.DBusSignalFlags.NONE,
+            'org.freedesktop.DBus',
+            'org.freedesktop.DBus',
+            'NameOwnerChanged',
+            '/org/freedesktop/DBus',
+            null,
+            Gio.DBusSignalFlags.NONE,
             (_c, _s, _p, _i, _sig, params) => {
                 const [name, oldOwner, newOwner] = params.deep_unpack();
                 if (!name.startsWith(MPRIS_PREFIX)) return;
-                if (!oldOwner && newOwner && !this._busName) this._connect(name);
-                else if (oldOwner && !newOwner && this._busName === name) this._disconnect();
+                
+                if (!oldOwner && newOwner && !this._busName) {
+                    this._connect(name);
+                } else if (oldOwner && !newOwner && this._busName === name) {
+                    this._disconnect();
+                    // Cari player cadangan jika ada
+                    this.refresh();
+                }
             }
         );
 
-        try {
-            const dbusProxy = Gio.DBusProxy.new_for_bus_sync(
-                Gio.BusType.SESSION, Gio.DBusProxyFlags.NONE, null,
-                'org.freedesktop.DBus', '/org/freedesktop/DBus',
-                'org.freedesktop.DBus', null
-            );
-            const res = dbusProxy.call_sync('ListNames', null, Gio.DBusCallFlags.NONE, -1, null);
-            const [namesArr] = res.deep_unpack();
-            const found = namesArr.find(n => n.startsWith(MPRIS_PREFIX));
-            if (found) this._connect(found);
-        } catch (e) {
-            logError(e, 'DynamicIsland: ListNames gagal');
-        }
+        this.refresh();
     }
 
     _connect(busName) {
-        if (this._busName === busName) return;
-        this._disconnect();
+        if (this._busName === busName && this._propsProxy) return;
+        this._disconnect(false);
         this._busName = busName;
-        console.log('[DynamicIsland] MPRIS connected:', busName);
 
         try {
             this._propsProxy = Gio.DBusProxy.new_for_bus_sync(
@@ -54,7 +49,6 @@ export class MediaWatcher {
                 busName, MPRIS_PATH, PROPS_IFACE, null
             );
         } catch (e) {
-            logError(e, 'DynamicIsland: props proxy gagal');
             this._busName = null;
             return;
         }
@@ -62,45 +56,42 @@ export class MediaWatcher {
         this._signalId = this._bus.signal_subscribe(
             busName, PROPS_IFACE, 'PropertiesChanged', MPRIS_PATH,
             null, Gio.DBusSignalFlags.NONE,
-            () => this._refresh()
+            () => this._readAll()
         );
 
-        this._refresh();
+        this._readAll();
     }
 
-    _disconnect() {
+    _disconnect(notify = true) {
         if (this._signalId) {
             this._bus.signal_unsubscribe(this._signalId);
             this._signalId = null;
         }
         this._propsProxy = null;
         this._busName = null;
-        try { this._onUpdate?.(null); } catch (_) {}
+        if (notify) {
+            try { this._onUpdate?.(null); } catch (_) {}
+        }
     }
 
-    _refresh() {
+    _readAll() {
         if (!this._propsProxy) return;
         try {
             const res = this._propsProxy.call_sync(
-                'GetAll', new GLib.Variant('(s)', [MPRIS_IFACE]),
-                Gio.DBusCallFlags.NONE, -1, null
+                'GetAll',
+                new GLib.Variant('(s)', [MPRIS_IFACE]),
+                Gio.DBusCallFlags.NONE,
+                1500, // Hindari hanging
+                null
             );
             const [dict] = res.deep_unpack();
             this._emit(dict);
-        } catch (e) {
-            logError(e, 'DynamicIsland: GetAll gagal');
-        }
+        } catch (_) {}
     }
 
     _emit(props) {
         try {
-            const unwrap = (v) => {
-                if (v == null) return null;
-                if (typeof v === 'object' && typeof v.deep_unpack === 'function') {
-                    try { return v.deep_unpack(); } catch (_) { return v; }
-                }
-                return v;
-            };
+            const unwrap = v => (v && typeof v.deep_unpack === 'function') ? v.deep_unpack() : v;
 
             const status = unwrap(props['PlaybackStatus']) ?? 'Stopped';
             const meta   = unwrap(props['Metadata']) ?? {};
@@ -120,33 +111,31 @@ export class MediaWatcher {
                 title:   String(title),
                 artist:  String(artist),
                 artUrl:  artUrl ? String(artUrl) : null,
-                length,                                   // ← BARU: durasi (microsec)
+                length,
                 canPlay: unwrap(props['CanPlay'])   ?? false,
                 canNext: unwrap(props['CanGoNext']) ?? false,
                 canSeek: unwrap(props['CanSeek'])   ?? false,
             });
-        } catch (e) {
-            logError(e, 'DynamicIsland: emit gagal');
-        }
+        } catch (_) {}
     }
 
-    // Ambil Position (poll manual, tidak auto-update via PropertiesChanged)
     getPosition() {
         if (!this._propsProxy) return 0;
         try {
             const res = this._propsProxy.call_sync(
                 'Get',
                 new GLib.Variant('(ss)', [MPRIS_IFACE, 'Position']),
-                Gio.DBusCallFlags.NONE, -1, null
+                Gio.DBusCallFlags.NONE,
+                500,
+                null
             );
             const [variant] = res.deep_unpack();
             return Number(variant?.deep_unpack?.() ?? variant) || 0;
-        } catch (e) {
+        } catch (_) {
             return 0;
         }
     }
 
-    // Seek ke posisi absolut (microseconds)
     seek(targetMicros) {
         if (!this._busName) return;
         try {
@@ -155,11 +144,9 @@ export class MediaWatcher {
             this._bus.call_sync(
                 this._busName, MPRIS_PATH, MPRIS_IFACE, 'Seek',
                 new GLib.Variant('(x)', [offset]),
-                null, Gio.DBusCallFlags.NONE, -1, null
+                null, Gio.DBusCallFlags.NONE, 500, null
             );
-        } catch (e) {
-            logError(e, 'DynamicIsland: Seek gagal');
-        }
+        } catch (_) {}
     }
 
     _callPlayer(method) {
@@ -167,25 +154,36 @@ export class MediaWatcher {
         try {
             this._bus.call_sync(
                 this._busName, MPRIS_PATH, MPRIS_IFACE, method,
-                null, null, Gio.DBusCallFlags.NONE, -1, null
+                null, null, Gio.DBusCallFlags.NONE, 500, null
             );
-        } catch (e) {
-            logError(e, `DynamicIsland: ${method} gagal`);
-        }
+        } catch (_) {}
     }
 
     togglePlayPause() { this._callPlayer('PlayPause'); }
     next()            { this._callPlayer('Next'); }
     previous()        { this._callPlayer('Previous'); }
 
-    refresh() { this._refresh(); }
+    refresh() {
+        try {
+            const dbusProxy = Gio.DBusProxy.new_for_bus_sync(
+                Gio.BusType.SESSION, Gio.DBusProxyFlags.NONE, null,
+                'org.freedesktop.DBus', '/org/freedesktop/DBus',
+                'org.freedesktop.DBus', null
+            );
+            const res = dbusProxy.call_sync('ListNames', null, Gio.DBusCallFlags.NONE, 1000, null);
+            const [namesArr] = res.deep_unpack();
+            const found = namesArr.find(n => n.startsWith(MPRIS_PREFIX));
+            if (found) this._connect(found);
+            else this._disconnect(true);
+        } catch (_) {}
+    }
 
     destroy() {
         if (this._nameOwnerId) {
             this._bus.signal_unsubscribe(this._nameOwnerId);
             this._nameOwnerId = null;
         }
-        this._disconnect();
+        this._disconnect(false);
         this._onUpdate = null;
         this._bus = null;
     }
