@@ -1,12 +1,50 @@
-/* ======== PILL UTAMA (DEEP BLACK OLEDO-LOOK) ======== */
+/* ================= 1. PILL UTAMA & SQUIRCLE TRANSFORM ================= */
 .dynamic-island-pill {
     background-color: #000000;
-    border-radius: 999px;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.65);
-    border: 0.5px solid rgba(255, 255, 255, 0.08);
+    border-radius: 999px; /* Bentuk kapsul saat collapsed */
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.75), 0 0 0 0.5px rgba(255, 255, 255, 0.14);
 }
 
-/* ======== COMPACT VIEW (IPHONE STYLE) ======== */
+/* Saat membesar menjadi Media Player: Berubah menjadi Squircle elegan khas iOS */
+.dynamic-island-pill.is-expanded-media {
+    border-radius: 38px !important;
+}
+
+/* Saat membesar menjadi Notifikasi */
+.dynamic-island-pill.is-expanded-notif {
+    border-radius: 30px !important;
+}
+
+/* ================= 2. NOTIFIKASI SQUIRCLE (SCREENSHOT DLL) ================= */
+.dynamic-island-notif-box {
+    padding: 0 16px;
+    spacing: 14px;
+}
+
+.dynamic-island-notif-art {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    background-color: #1c1c1e;
+}
+
+.dynamic-island-notif-text-box {
+    spacing: 2px;
+}
+
+.dynamic-island-notif-title {
+    color: #ffffff;
+    font-size: 0.94em;
+    font-weight: 700;
+}
+
+.dynamic-island-notif-body {
+    color: #8e8e93; /* Warna abu-abu halus khas Apple */
+    font-size: 0.82em;
+    font-weight: 500;
+}
+
+/* ================= 3. COMPACT VIEW (COLLAPSED MUSIC) ================= */
 .dynamic-island-compact {
     padding: 0 10px;
     spacing: 12px;
@@ -19,108 +57,139 @@
     background-color: #1a1a1a;
 }
 
-/* ======== EXPANDED VIEW ======== */
-.dynamic-island-content {
-    padding: 10px 16px;
-    spacing: 8px;
-}
-
-.dynamic-island-top-row {
-    spacing: 12px;
-}
-
-.dynamic-island-cover-art {
-    width: 44px;
-    height: 44px;
-    border-radius: 12px;
-    background-color: #1c1c1e;
-}
-
-.dynamic-island-track-info {
-    spacing: 2px;
-}
-
-.dynamic-island-title {
-    color: #ffffff;
-    font-size: 0.96em;
-    font-weight: 600;
-}
-
-.dynamic-island-artist {
-    color: #98989f;
-    font-size: 0.82em;
-}
-
-/* ======== WAVEFORM EQUALIZER ======== */
 .dynamic-island-wave {
     spacing: 3px;
     padding: 0 4px;
 }
 
 .dynamic-island-wave-bar {
-    background-color: #30d158; /* Warna hijau khas iOS Now Playing */
+    background-color: #30d158; /* Hijau iOS Now Playing */
     border-radius: 999px;
     width: 3px;
     min-height: 4px;
 }
 
-/* ======== TOMBOL KONTROL ======== */
-.dynamic-island-actions {
-    spacing: 6px;
+/* ================= 4. EXPANDED NOW PLAYING (PERSIS IPHONE) ================= */
+.dynamic-island-media-content {
+    padding: 16px 20px 14px 20px;
+    spacing: 12px;
 }
 
-.dynamic-island-btn {
-    background-color: rgba(255, 255, 255, 0.12);
-    border-radius: 999px;
-    padding: 6px 8px;
+/* Top Row: Cover Art Besar + Track Info + Equalizer */
+.dynamic-island-media-top-row {
+    spacing: 14px;
+}
+
+.dynamic-island-media-art {
+    width: 52px;
+    height: 52px;
+    border-radius: 12px;
+    background-color: #1c1c1e;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.dynamic-island-track-info {
+    spacing: 3px;
+}
+
+.dynamic-island-title {
     color: #ffffff;
+    font-size: 1.05em;
+    font-weight: 700;
 }
 
-.dynamic-island-btn:hover {
-    background-color: rgba(255, 255, 255, 0.25);
-}
-
-.dynamic-island-btn:active {
-    background-color: rgba(255, 255, 255, 0.4);
-}
-
-.dynamic-island-btn-play {
-    padding: 6px 9px;
-}
-
-/* ======== PROGRESS BAR & SEEK ======== */
-.dynamic-island-progress-row {
-    spacing: 8px;
-    padding: 0 2px;
-}
-
-.dynamic-island-time {
+.dynamic-island-artist {
     color: #8e8e93;
-    font-size: 0.72em;
-    min-width: 30px;
+    font-size: 0.86em;
+    font-weight: 500;
+}
+
+.dynamic-island-header-wave {
+    spacing: 3px;
+    padding-left: 6px;
+}
+
+/* Row 2: Progress Seekbar & Waktu */
+.dynamic-island-progress-section {
+    spacing: 6px;
+    padding-top: 2px;
 }
 
 .dynamic-island-progress-track {
-    height: 4px;
-    background-color: rgba(255, 255, 255, 0.18);
-    border-radius: 2px;
-    min-width: 190px;
+    height: 6px;
+    background-color: rgba(255, 255, 255, 0.2);
+    border-radius: 999px;
+    min-width: 330px;
 }
 
 .dynamic-island-progress-fill {
-    height: 4px;
-    background-color: #ffffff;
-    border-radius: 2px;
-}
-
-.dynamic-island-progress-handle {
-    width: 8px;
-    height: 8px;
+    height: 6px;
     background-color: #ffffff;
     border-radius: 999px;
 }
 
-/* ======== CHARGING BANNER (IPHONE IDENTICAL) ======== */
+.dynamic-island-time-row {
+    padding: 0 1px;
+}
+
+.dynamic-island-time {
+    color: #636366; /* Warna waktu Apple */
+    font-size: 0.74em;
+    font-weight: 600;
+}
+
+/* Row 3: Tombol Kontrol Tengah Bawah */
+.dynamic-island-controls-row {
+    spacing: 36px; /* Jarak lega antar tombol ala iOS */
+    padding-top: 2px;
+}
+
+.dynamic-island-ctrl-btn {
+    color: #ffffff;
+    padding: 6px;
+    border-radius: 999px;
+    transition: all 150ms ease;
+}
+
+.dynamic-island-ctrl-btn:hover {
+    color: #e5e5ea;
+}
+
+.dynamic-island-ctrl-btn:active {
+    color: #8e8e93;
+}
+
+.dynamic-island-play-btn {
+    padding: 4px;
+}
+
+/* ================= 5. VOLUME / BRIGHTNESS & CHARGING ================= */
+.dynamic-island-hud-box {
+    padding: 0 16px;
+    spacing: 14px;
+}
+
+.dynamic-island-hud-icon {
+    color: #ffffff;
+}
+
+.dynamic-island-hud-icon-muted {
+    color: #ff453a !important;
+}
+
+.dynamic-island-hud-track {
+    height: 7px;
+    background-color: rgba(255, 255, 255, 0.22);
+    border-radius: 999px;
+    width: 140px;
+}
+
+.dynamic-island-hud-fill {
+    height: 7px;
+    background-color: #ffffff;
+    border-radius: 999px;
+}
+
 .dynamic-island-charging-box {
     padding: 0 14px;
     spacing: 12px;
@@ -137,7 +206,7 @@
 }
 
 .dynamic-island-charging-percent {
-    color: #30d158; /* Warna hijau neon khas Apple Battery */
+    color: #30d158;
     font-size: 0.85em;
     font-weight: 700;
 }
@@ -148,7 +217,6 @@
     font-weight: bold;
 }
 
-/* Kapsul Baterai Horizontal */
 .dynamic-island-battery-shell {
     width: 24px;
     height: 12px;
@@ -164,39 +232,9 @@
     border-radius: 2px;
 }
 
-/* Tutup/Tip kecil baterai di ujung kanan */
 .dynamic-island-battery-cap {
     width: 2px;
     height: 5px;
     background-color: #30d158;
     border-radius: 0 1px 1px 0;
-}
-
-/* ======== VOLUME & BRIGHTNESS HUD (IPHONE IDENTICAL) ======== */
-.dynamic-island-hud-box {
-    padding: 0 16px;
-    spacing: 14px;
-}
-
-.dynamic-island-hud-icon {
-    color: #ffffff;
-}
-
-/* Saat di-mute, ikon berubah menjadi merah khas Apple */
-.dynamic-island-hud-icon-muted {
-    color: #ff453a !important;
-}
-
-/* Kapsul Slider Horizontal */
-.dynamic-island-hud-track {
-    height: 7px;
-    background-color: rgba(255, 255, 255, 0.22);
-    border-radius: 999px;
-    width: 140px;
-}
-
-.dynamic-island-hud-fill {
-    height: 7px;
-    background-color: #ffffff;
-    border-radius: 999px;
 }
