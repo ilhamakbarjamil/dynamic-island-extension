@@ -237,3 +237,42 @@
     background-color: #30d158;
     border-radius: 0 1px 1px 0;
 }
+
+/* ================= 6. BLUETOOTH / AIRPODS VIEW ================= */
+.dynamic-island-bt-box {
+    padding: 0 14px;
+    spacing: 10px;
+}
+
+.dynamic-island-bt-icon-bin {
+    width: 22px;
+    height: 22px;
+    border-radius: 999px;
+    background-color: #1c1c1e;
+}
+
+.dynamic-island-bt-icon {
+    color: #ffffff;
+}
+
+.dynamic-island-bt-name {
+    color: #ffffff;
+    font-size: 0.86em;
+    font-weight: 600;
+}
+
+.dynamic-island-bt-right {
+    spacing: 6px;
+}
+
+.dynamic-island-bt-status {
+    color: #30d158;
+    font-size: 0.82em;
+    font-weight: 600;
+}
+
+.dynamic-island-bt-percent {
+    color: #30d158;
+    font-size: 0.82em;
+    font-weight: 700;
+}

@@ -6,12 +6,14 @@ export class BluetoothWatcher {
         this._onConnected = onConnected;
         this._bus = Gio.DBus.system;
         this._signalId = null;
+        
+        // Anti-spam tracker
+        this._lastDevicePath = null;
+        this._lastConnectTime = 0;
 
         try {
-            // Berlangganan sinyal PropertiesChanged tanpa membatasi sender/arg0 secara kaku
-            // agar sinyal dari daemon BlueZ (:1.xx) tidak terblokir oleh filter D-Bus
             this._signalId = this._bus.signal_subscribe(
-                null, // Tangkap dari semua sender di system bus
+                null,
                 'org.freedesktop.DBus.Properties',
                 'PropertiesChanged',
                 null,
@@ -21,14 +23,13 @@ export class BluetoothWatcher {
                     this._handlePropertiesChanged(path, params);
                 }
             );
-            console.log('[DynamicIsland] BluetoothWatcher aktif memantau D-Bus.');
+            console.log('[DynamicIsland] BluetoothWatcher aktif (dengan Debounce & Smart Icons).');
         } catch (e) {
             console.log('[DynamicIsland] Gagal inisialisasi Bluetooth listener:', e.message);
         }
     }
 
     _handlePropertiesChanged(path, params) {
-        // Hanya proses sinyal yang berasal dari path perangkat Bluetooth BlueZ
         if (!path || !path.startsWith('/org/bluez')) return;
 
         try {
@@ -40,22 +41,26 @@ export class BluetoothWatcher {
             if ('Connected' in changedProps) {
                 const isConnected = unwrap(changedProps['Connected']);
                 if (isConnected === true) {
-                    console.log('[DynamicIsland] Perangkat Bluetooth terdeteksi tersambung di:', path);
-                    // Beri jeda 350ms agar BlueZ selesai membaca metadata & profil audio
-                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 350, () => {
+                    const now = GLib.get_monotonic_time();
+                    // Cegah pop-up berulang jika perangkat yang sama memicu sinyal dalam 5 detik
+                    if (this._lastDevicePath === path && (now - this._lastConnectTime) < 5_000_000) {
+                        return;
+                    }
+                    this._lastDevicePath = path;
+                    this._lastConnectTime = now;
+
+                    // Beri jeda 500ms agar metadata profil audio dan baterai selesai dimuat
+                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
                         this._queryDevice(path);
                         return GLib.SOURCE_REMOVE;
                     });
                 }
             }
-        } catch (e) {
-            console.log('[DynamicIsland] Error membaca properti Bluetooth:', e.message);
-        }
+        } catch (_) {}
     }
 
     _queryDevice(path) {
         try {
-            // Panggil GetAll secara langsung melalui D-Bus agar tidak tergantung pada cache proxy
             const res = this._bus.call_sync(
                 'org.bluez',
                 path,
@@ -64,7 +69,7 @@ export class BluetoothWatcher {
                 new GLib.Variant('(s)', ['org.bluez.Device1']),
                 null,
                 Gio.DBusCallFlags.NONE,
-                1500,
+                1000,
                 null
             );
 
@@ -72,16 +77,23 @@ export class BluetoothWatcher {
             const unwrap = v => (v && typeof v.deep_unpack === 'function') ? v.deep_unpack() : v;
 
             const alias = unwrap(dict['Alias']) || unwrap(dict['Name']) || 'Bluetooth Device';
-            const rawIcon = String(unwrap(dict['Icon']) || '');
+            const rawIcon = String(unwrap(dict['Icon']) || '').toLowerCase();
 
+            // Pemilihan ikon cerdas sesuai jenis perangkat
             let icon = 'audio-headphones-symbolic';
             if (rawIcon.includes('mouse') || rawIcon.includes('pointing')) {
                 icon = 'input-mouse-symbolic';
             } else if (rawIcon.includes('keyboard')) {
                 icon = 'input-keyboard-symbolic';
+            } else if (rawIcon.includes('gaming') || rawIcon.includes('gamepad') || rawIcon.includes('joystick')) {
+                icon = 'input-gaming-symbolic';
+            } else if (rawIcon.includes('speaker') || rawIcon.includes('audio-card')) {
+                icon = 'audio-speakers-symbolic';
+            } else if (rawIcon.includes('phone')) {
+                icon = 'phone-symbolic';
             }
 
-            // Coba ambil persentase baterai jika perangkat menyediakannya
+            // Ambil persentase baterai jika tersedia
             let battery = null;
             try {
                 const bRes = this._bus.call_sync(
@@ -92,7 +104,7 @@ export class BluetoothWatcher {
                     new GLib.Variant('(ss)', ['org.bluez.Battery1', 'Percentage']),
                     null,
                     Gio.DBusCallFlags.NONE,
-                    600,
+                    500,
                     null
                 );
                 const [bVal] = bRes.deep_unpack();
@@ -100,11 +112,7 @@ export class BluetoothWatcher {
                 if (pct !== undefined && pct !== null) {
                     battery = Number(pct);
                 }
-            } catch (_) {
-                // Sebagian perangkat Bluetooth tidak mengekspos org.bluez.Battery1 (normal)
-            }
-
-            console.log(`[DynamicIsland] Menampilkan pop-up: ${alias} (Baterai: ${battery})`);
+            } catch (_) {}
 
             this._onConnected?.({
                 name: String(alias),
