@@ -1,11 +1,17 @@
+/* ======== PILL UTAMA ======== */
 .dynamic-island-pill {
     background-color: #000000;
     border-radius: 32px;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.55);
 }
 
+/* ======== KONTEN ======== */
 .dynamic-island-content {
-    padding: 6px 12px;
+    padding: 8px 14px;
+    spacing: 6px;
+}
+
+.dynamic-island-top-row {
     spacing: 10px;
 }
 
@@ -31,6 +37,7 @@
     font-size: 0.82em;
 }
 
+/* ======== WAVE (compact) ======== */
 .dynamic-island-wave {
     spacing: 3px;
     padding: 0 8px;
@@ -43,6 +50,7 @@
     min-height: 4px;
 }
 
+/* ======== TOMBOL AKSI ======== */
 .dynamic-island-actions {
     spacing: 6px;
     padding-right: 4px;
@@ -61,4 +69,36 @@
 
 .dynamic-island-btn:active {
     background-color: rgba(255, 255, 255, 0.42);
+}
+
+/* ======== PROGRESS BAR ======== */
+.dynamic-island-progress-row {
+    spacing: 8px;
+    padding: 0 2px;
+}
+
+.dynamic-island-time {
+    color: #b0b0b5;
+    font-size: 0.72em;
+    min-width: 32px;
+}
+
+.dynamic-island-progress-track {
+    height: 4px;
+    background-color: rgba(255, 255, 255, 0.18);
+    border-radius: 2px;
+    min-width: 180px;
+}
+
+.dynamic-island-progress-fill {
+    height: 4px;
+    background-color: #ffffff;
+    border-radius: 2px;
+}
+
+.dynamic-island-progress-handle {
+    width: 8px;
+    height: 8px;
+    background-color: #ffffff;
+    border-radius: 999px;
 }

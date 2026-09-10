@@ -9,40 +9,41 @@ import { MediaWatcher } from './mpris.js';
 
 export default class DynamicIslandExtension extends Extension {
     enable() {
-        console.log('[DynamicIsland] ===== ENABLE =====');
+        console.log('[DynamicIsland] ===== ENABLE DIPANGGIL =====');
 
-        // ==== SETTINGS ====
         this._settings = new Gio.Settings({ schema_id: 'org.gnome.desktop.notifications' });
         this._originalShowBanners = this._settings.get_boolean('show-banners');
         this._settings.set_boolean('show-banners', false);
 
-        // ==== DIMENSI ====
+        // ======== DIMENSI ========
         this._collapsedWidth  = 140;
         this._collapsedHeight = 34;
         this._expandedWidth   = 400;
-        this._expandedHeight  = 88;
+        this._expandedHeight  = 108;
 
-        // ==== STATE ====
+        // ======== STATE ========
         this._isExpanded = false;
-        this._isVisible = false;
-        this._mediaActive = false;
-        this._currentMedia = null;
-        this._currentNotification = null;
         this._notificationQueue = [];
         this._isProcessingQueue = false;
+        this._currentNotification = null;
         this._waitingForMouseLeave = false;
         this._autoCollapseId = null;
-        this._waveTickId = null;
-        this._wavePhase = 0;
-        this._coverCache = new Map();
+        this._currentMedia = null;
+        this._mediaActive = false;
+        this._isVisible = false;
 
+        // Progress bar state
+        this._progressTickId = null;
+        this._isDraggingSeek = false;
+
+        // ======== MONITOR ========
         this._monitor = Main.layoutManager.primaryMonitor;
         this._monitorsChangedId = Main.layoutManager.connect('monitors-changed', () => {
             this._monitor = Main.layoutManager.primaryMonitor;
             this._reposition(this._isExpanded ? this._expandedWidth : this._collapsedWidth);
         });
 
-        // ============ PILL UTAMA ============
+        // ======== PILL ========
         this._island = new St.BoxLayout({
             style_class: 'dynamic-island-pill',
             reactive: true,
@@ -54,22 +55,29 @@ export default class DynamicIslandExtension extends Extension {
             vertical: false,
         });
 
-        // ============ KONTEN ============
+        // ======== KONTEN (vertikal: top row + progress row) ========
         this._content = new St.BoxLayout({
             style_class: 'dynamic-island-content',
-            vertical: false,
+            vertical: true,
             opacity: 0,
             visible: false,
-            reactive: false,
             x_expand: true,
             y_expand: true,
+            reactive: false,
+        });
+
+        // ---------- TOP ROW ----------
+        this._topRow = new St.BoxLayout({
+            style_class: 'dynamic-island-top-row',
+            vertical: false,
+            x_expand: true,
+            reactive: false,
         });
 
         this._icon = new St.Icon({
             icon_size: 40,
             icon_name: 'dialog-information-symbolic',
         });
-
         this._iconBin = new St.Bin({
             style_class: 'dynamic-island-cover-art',
             x_align: Clutter.ActorAlign.CENTER,
@@ -77,7 +85,7 @@ export default class DynamicIslandExtension extends Extension {
             reactive: false,
             child: this._icon,
         });
-        this._content.add_child(this._iconBin);
+        this._topRow.add_child(this._iconBin);
 
         this._textInfo = new St.BoxLayout({
             style_class: 'dynamic-island-track-info',
@@ -100,9 +108,9 @@ export default class DynamicIslandExtension extends Extension {
         this._bodyLabel.clutter_text.ellipsize  = 2;
         this._textInfo.add_child(this._titleLabel);
         this._textInfo.add_child(this._bodyLabel);
-        this._content.add_child(this._textInfo);
+        this._topRow.add_child(this._textInfo);
 
-        // ============ TOMBOL AKSI ============
+        // Tombol aksi
         this._actionBox = new St.BoxLayout({
             style_class: 'dynamic-island-actions',
             vertical: false,
@@ -113,20 +121,88 @@ export default class DynamicIslandExtension extends Extension {
         this._playBtn = new St.Button({
             style_class: 'dynamic-island-btn',
             child: new St.Icon({ icon_name: 'media-playback-pause-symbolic', icon_size: 14 }),
-            can_focus: false,
+            can_focus: true,
         });
         this._nextBtn = new St.Button({
             style_class: 'dynamic-island-btn',
             child: new St.Icon({ icon_name: 'media-skip-forward-symbolic', icon_size: 14 }),
-            can_focus: false,
+            can_focus: true,
         });
         this._actionBox.add_child(this._playBtn);
         this._actionBox.add_child(this._nextBtn);
-        this._content.add_child(this._actionBox);
+        this._topRow.add_child(this._actionBox);
+
+        this._content.add_child(this._topRow);
+
+        // ---------- PROGRESS ROW ----------
+        this._progressRow = new St.BoxLayout({
+            style_class: 'dynamic-island-progress-row',
+            vertical: false,
+            x_expand: true,
+            reactive: false,
+        });
+
+        this._timeLabel = new St.Label({
+            style_class: 'dynamic-island-time',
+            text: '0:00',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        this._progressTrack = new St.Widget({
+            style_class: 'dynamic-island-progress-track',
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+            reactive: true,
+            track_hover: true,
+        });
+
+        this._progressFill = new St.Widget({
+            style_class: 'dynamic-island-progress-fill',
+            x_align: Clutter.ActorAlign.START,
+            y_align: Clutter.ActorAlign.FILL,
+            reactive: false,
+        });
+        this._progressTrack.add_child(this._progressFill);
+
+        this._progressHandle = new St.Widget({
+            style_class: 'dynamic-island-progress-handle',
+            x_align: Clutter.ActorAlign.START,
+            y_align: Clutter.ActorAlign.CENTER,
+            reactive: false,
+        });
+        this._progressTrack.add_child(this._progressHandle);
+
+        this._durationLabel = new St.Label({
+            style_class: 'dynamic-island-time',
+            text: '0:00',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        this._progressRow.add_child(this._timeLabel);
+        this._progressRow.add_child(this._progressTrack);
+        this._progressRow.add_child(this._durationLabel);
+        this._content.add_child(this._progressRow);
+
+        // Seek handler
+        this._progressTrack.connect('button-press-event', (_a, event) => {
+            if (!this._currentMedia?.canSeek) return Clutter.EVENT_STOP;
+            this._isDraggingSeek = true;
+            this._seekFromEvent(event);
+            return Clutter.EVENT_STOP;
+        });
+        this._progressTrack.connect('motion-event', (_a, event) => {
+            if (!this._isDraggingSeek) return Clutter.EVENT_PROPAGATE;
+            this._seekFromEvent(event);
+            return Clutter.EVENT_STOP;
+        });
+        this._progressTrack.connect('button-release-event', () => {
+            this._isDraggingSeek = false;
+            return Clutter.EVENT_STOP;
+        });
 
         this._island.add_child(this._content);
 
-        // ============ WAVE ============
+        // ======== WAVE ========
         this._waveBars = [];
         this._waveBox = new St.BoxLayout({
             style_class: 'dynamic-island-wave',
@@ -139,8 +215,7 @@ export default class DynamicIslandExtension extends Extension {
         for (let i = 0; i < 4; i++) {
             const bar = new St.Widget({
                 style_class: 'dynamic-island-wave-bar',
-                width: 3,
-                height: 6,
+                width: 3, height: 6,
                 y_align: Clutter.ActorAlign.CENTER,
                 reactive: false,
             });
@@ -150,13 +225,19 @@ export default class DynamicIslandExtension extends Extension {
         this._island.add_child(this._waveBox);
 
         Main.uiGroup.add_child(this._island);
+
+        // Paksa initial layout pass
+        this._island.queue_relayout();
         this._reposition(this._collapsedWidth);
         this._island.queue_relayout();
 
-        // ============ INTERAKSI HOVER ============
+        // ======== HOVER ========
         this._island.connect('notify::hover', () => {
             const hovering = this._island.hover;
-            const hasContent = this._isProcessingQueue || this._mediaActive;
+            const hasContent = this._notificationQueue.length > 0
+                || this._isProcessingQueue
+                || this._mediaActive;
+
             if (hovering && hasContent) {
                 this._expand();
             } else if (!hovering) {
@@ -169,6 +250,16 @@ export default class DynamicIslandExtension extends Extension {
             }
         });
 
+        this._island.connect('motion-event', () => {
+            if (this._island.hover) {
+                const hasContent = this._notificationQueue.length > 0
+                    || this._isProcessingQueue
+                    || this._mediaActive;
+                if (hasContent && !this._isExpanded) this._expand();
+            }
+            return Clutter.EVENT_PROPAGATE;
+        });
+
         this._island.connect('button-release-event', () => {
             if (this._currentNotification) this._onIslandClicked();
             return Clutter.EVENT_STOP;
@@ -177,7 +268,7 @@ export default class DynamicIslandExtension extends Extension {
         this._playBtn.connect('clicked', () => this._media?.togglePlayPause());
         this._nextBtn.connect('clicked', () => this._media?.next());
 
-        // ============ NOTIFIKASI ============
+        // ======== NOTIFIKASI ========
         this._sourceConnections = new Map();
         Main.messageTray.getSources().forEach(s => this._connectSource(s));
         this._sourceAddedId = Main.messageTray.connect('source-added', (_t, s) => {
@@ -187,11 +278,13 @@ export default class DynamicIslandExtension extends Extension {
             this._disconnectSource(s);
         });
 
-        // ============ MPRIS ============
-        console.log('[DynamicIsland] Init MPRIS...');
+        // ======== MPRIS ========
+        console.log('[DynamicIsland] Inisialisasi MPRIS watcher...');
         this._media = new MediaWatcher(state => this._onMediaUpdate(state));
+        console.log('[DynamicIsland] MediaWatcher selesai dibuat');
 
-        // ============ WAVE TIMER ============
+        // ======== WAVE TIMER ========
+        this._wavePhase = 0;
         this._waveTickId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 220, () => {
             const playing = this._currentMedia?.status === 'Playing';
             if (!this._isExpanded && this._mediaActive && playing && this._isVisible) {
@@ -207,6 +300,23 @@ export default class DynamicIslandExtension extends Extension {
             }
             return GLib.SOURCE_CONTINUE;
         });
+
+        // ======== PROGRESS TICKER ========
+        this._progressTickId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1000, () => {
+            if (this._mediaActive
+                && this._currentMedia?.status === 'Playing'
+                && this._isExpanded
+                && !this._isDraggingSeek) {
+                this._updateProgressUI();
+            }
+            return GLib.SOURCE_CONTINUE;
+        });
+
+        // ======== Fallback refresh ========
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
+            if (this._media) this._media.refresh();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     // ================= VISIBILITY =================
@@ -221,18 +331,14 @@ export default class DynamicIslandExtension extends Extension {
     _hideIsland() {
         if (!this._island || !this._isVisible) return;
         this._isVisible = false;
-        // State untuk progress bar
-        this._progressTickId = null;
-        this._isDraggingSeek = false;
-        this._cachedPosition = 0;
         this._island.opacity = 0;
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 220, () => {
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 200, () => {
             if (!this._isVisible && this._island) this._island.visible = false;
             return GLib.SOURCE_REMOVE;
         });
     }
 
-    // ================= POSISI =================
+    // ================= REPOSITION =================
     _reposition(currentWidth) {
         if (!this._island || !this._monitor) return;
         const x = this._monitor.x + Math.floor((this._monitor.width - currentWidth) / 2);
@@ -277,6 +383,7 @@ export default class DynamicIslandExtension extends Extension {
 
         this._showIsland();
         this._actionBox.visible = false;
+        this._progressRow.visible = false;
 
         this._triggerAutoExpand();
     }
@@ -284,7 +391,6 @@ export default class DynamicIslandExtension extends Extension {
     _setIcon({ gicon = null, iconName = null, pixbuf = null }) {
         this._icon.gicon = null;
         this._icon.icon_name = null;
-
         if (gicon) {
             this._icon.gicon = gicon;
         } else if (pixbuf) {
@@ -296,7 +402,7 @@ export default class DynamicIslandExtension extends Extension {
                 } else {
                     this._icon.icon_name = 'audio-x-generic-symbolic';
                 }
-            } catch (_) {
+            } catch (e) {
                 this._icon.icon_name = 'audio-x-generic-symbolic';
             }
         } else if (iconName) {
@@ -315,6 +421,7 @@ export default class DynamicIslandExtension extends Extension {
             this._mediaActive = false;
             this._waveBox.visible = false;
             this._actionBox.visible = false;
+            this._progressRow.visible = false;
             if (!this._isProcessingQueue) {
                 this._hideIsland();
                 this._collapse();
@@ -329,12 +436,21 @@ export default class DynamicIslandExtension extends Extension {
         this._bodyLabel.set_text(state.artist || '');
         this._loadCoverArt(state.artUrl);
 
-        this._playBtn.child.icon_name = state.status === 'Playing'
+        const playIcon = state.status === 'Playing'
             ? 'media-playback-pause-symbolic'
             : 'media-playback-start-symbolic';
+        this._playBtn.child.icon_name = playIcon;
 
         this._waveBox.visible = !this._isExpanded && !this._isProcessingQueue;
         this._actionBox.visible = this._isExpanded && !this._isProcessingQueue;
+
+        // Progress row
+        if (state.length > 0) {
+            this._progressRow.visible = true;
+            this._updateProgressUI();
+        } else {
+            this._progressRow.visible = false;
+        }
     }
 
     _loadCoverArt(url) {
@@ -342,42 +458,87 @@ export default class DynamicIslandExtension extends Extension {
             this._setIcon({ iconName: 'audio-x-generic-symbolic' });
             return;
         }
-
         if (url.startsWith('file://')) {
             try {
                 const path = Gio.File.new_for_uri(url).get_path();
                 const pb = GdkPixbuf.Pixbuf.new_from_file_at_scale(path, 96, 96, true);
                 this._setIcon({ pixbuf: pb });
-            } catch (_) {
+            } catch (e) {
                 this._setIcon({ iconName: 'audio-x-generic-symbolic' });
             }
             return;
         }
-
+        this._coverCache ??= new Map();
         if (this._coverCache.has(url)) {
             this._setIcon({ pixbuf: this._coverCache.get(url) });
             return;
         }
-
         this._setIcon({ iconName: 'audio-x-generic-symbolic' });
 
-        try {
-            const file = Gio.File.new_for_uri(url);
-            file.load_contents_async(null, (f, res) => {
-                try {
-                    const [, contents] = f.load_contents_finish(res);
-                    const stream = Gio.MemoryInputStream.new_from_bytes(contents);
-                    const pb = GdkPixbuf.Pixbuf.new_from_stream_at_scale(stream, 96, 96, true, null);
-                    this._coverCache.set(url, pb);
-                    if (this._currentMedia?.artUrl === url) {
-                        this._setIcon({ pixbuf: pb });
-                    }
-                } catch (_) {}
-            });
-        } catch (_) {}
+        const file = Gio.File.new_for_uri(url);
+        file.load_contents_async(null, (f, res) => {
+            try {
+                const [, contents] = f.load_contents_finish(res);
+                const stream = Gio.MemoryInputStream.new_from_bytes(contents);
+                const pb = GdkPixbuf.Pixbuf.new_from_stream_at_scale(stream, 96, 96, true, null);
+                this._coverCache.set(url, pb);
+                if (this._currentMedia?.artUrl === url) {
+                    this._setIcon({ pixbuf: pb });
+                }
+            } catch (e) { /* placeholder tetap */ }
+        });
     }
 
-    // ================= EXPAND / COLLAPSE =================
+    // ================= PROGRESS BAR =================
+    _formatTime(micros) {
+        const sec = Math.max(0, Math.floor(micros / 1_000_000));
+        const m = Math.floor(sec / 60);
+        const s = sec % 60;
+        return `${m}:${String(s).padStart(2, '0')}`;
+    }
+
+    _updateProgressUI() {
+        if (!this._currentMedia) return;
+        const duration = this._currentMedia.length || 0;
+        if (duration <= 0) {
+            this._progressRow.visible = false;
+            return;
+        }
+        this._progressRow.visible = true;
+
+        const pos = this._media?.getPosition() ?? 0;
+        const ratio = Math.max(0, Math.min(1, pos / duration));
+
+        const trackW = this._progressTrack.width || 220;
+        const fillW = Math.floor(trackW * ratio);
+
+        this._progressFill.width = Math.max(0, fillW);
+        this._progressHandle.set_position(Math.max(0, fillW - 4), 0);
+
+        this._timeLabel.set_text(this._formatTime(pos));
+        this._durationLabel.set_text(this._formatTime(duration));
+    }
+
+    _seekFromEvent(event) {
+        const duration = this._currentMedia?.length || 0;
+        if (duration <= 0) return;
+
+        const [x] = event.get_coords();
+        const [trackX] = this._progressTrack.get_transformed_position();
+        const trackW = this._progressTrack.width || 1;
+
+        const ratio = Math.max(0, Math.min(1, (x - trackX) / trackW));
+        const target = ratio * duration;
+
+        const fillW = Math.floor(trackW * ratio);
+        this._progressFill.width = Math.max(0, fillW);
+        this._progressHandle.set_position(Math.max(0, fillW - 4), 0);
+        this._timeLabel.set_text(this._formatTime(target));
+
+        this._media?.seek(target);
+    }
+
+    // ================= EKSPANSI =================
     _triggerAutoExpand() {
         if (this._autoCollapseId) {
             GLib.source_remove(this._autoCollapseId);
@@ -386,8 +547,8 @@ export default class DynamicIslandExtension extends Extension {
         this._expand();
         this._autoCollapseId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 4000, () => {
             this._autoCollapseId = null;
-            if (this._island?.hover) this._waitingForMouseLeave = true;
-            else                     this._collapseAndNext();
+            if (this._island.hover) this._waitingForMouseLeave = true;
+            else                    this._collapseAndNext();
             return GLib.SOURCE_REMOVE;
         });
     }
@@ -415,7 +576,11 @@ export default class DynamicIslandExtension extends Extension {
         });
 
         this._waveBox.visible = false;
-        if (this._mediaActive && !this._isProcessingQueue) this._actionBox.visible = true;
+        if (this._mediaActive && !this._isProcessingQueue) {
+            this._actionBox.visible = true;
+            this._progressRow.visible = this._currentMedia?.length > 0;
+        }
+        if (this._mediaActive) this._updateProgressUI();
     }
 
     _collapse() {
@@ -440,6 +605,7 @@ export default class DynamicIslandExtension extends Extension {
         });
 
         this._actionBox.visible = false;
+        this._progressRow.visible = false;
         if (this._mediaActive && !this._isProcessingQueue) this._waveBox.visible = true;
     }
 
@@ -497,6 +663,10 @@ export default class DynamicIslandExtension extends Extension {
             GLib.source_remove(this._waveTickId);
             this._waveTickId = null;
         }
+        if (this._progressTickId) {
+            GLib.source_remove(this._progressTickId);
+            this._progressTickId = null;
+        }
         if (this._media) {
             this._media.destroy();
             this._media = null;
@@ -506,7 +676,7 @@ export default class DynamicIslandExtension extends Extension {
         this._isProcessingQueue = false;
         this._waitingForMouseLeave = false;
         this._currentNotification = null;
-        this._coverCache.clear();
+        this._coverCache = null;
 
         if (this._island) {
             this._island.destroy();
