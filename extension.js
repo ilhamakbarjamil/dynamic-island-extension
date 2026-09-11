@@ -14,7 +14,7 @@ import { ControlCenterManager } from './controlCenter.js';
 
 export default class DynamicIslandExtension extends Extension {
     enable() {
-        console.log('[DynamicIsland] Mengaktifkan Dynamic Island (Klik Kanan Control Center & Smart Pause)...');
+        console.log('[DynamicIsland] Mengaktifkan VisionOS Glass Control Center...');
 
         this._settings = new Gio.Settings({ schema_id: 'org.gnome.desktop.notifications' });
         this._originalShowBanners = this._settings.get_boolean('show-banners');
@@ -37,12 +37,12 @@ export default class DynamicIslandExtension extends Extension {
         this._notifHeight         = 68;
         this._mediaExpandedWidth  = 390; 
         this._mediaExpandedHeight = 168;
-        this._timerExpandedWidth  = 385;
-        this._timerExpandedHeight = 135;
-        this._timerPresetHeight   = 106;
         this._recordExpandedHeight= 96;
         this._countdownWidth      = this._idleWidth;
-        this._ccExpandedHeight    = 295;
+        
+        // Dimensi Khusus Glass Control Center ala VisionOS
+        this._ccExpandedWidth     = 430;
+        this._ccExpandedHeight    = 370; // <-- Diperpanjang agar tidak mepet bawah
 
         // ======== STATE ========
         this._isExpanded = false;
@@ -628,7 +628,9 @@ export default class DynamicIslandExtension extends Extension {
         this._recordExpandedBox.add_child(this._recordStopBtn);
         this._island.add_child(this._recordExpandedBox);
 
-        // ================= CONTROL CENTER (GRID SIMETRIS) =================
+        // =========================================================================
+        // REDESAIN: CONTROL CENTER VISIONOS GLASS STYLE
+        // =========================================================================
         this._controlCenterBox = new St.BoxLayout({
             style_class: 'dynamic-island-cc-box',
             vertical: true,
@@ -639,190 +641,289 @@ export default class DynamicIslandExtension extends Extension {
             reactive: true,
         });
 
-        // Header Control Center
+        // 1. Header: Tombol Close [X] di kiri & Judul Tengah
         this._ccHeaderRow = new St.BoxLayout({
             style_class: 'dynamic-island-cc-header',
             vertical: false,
             x_expand: true,
             y_align: Clutter.ActorAlign.CENTER,
         });
+        this._ccBtnClose = new St.Button({
+            style_class: 'dynamic-island-cc-close',
+            child: new St.Icon({ icon_name: 'window-close-symbolic', icon_size: 13 }),
+            can_focus: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._ccBtnClose.connect('clicked', () => this._collapse());
+
         this._ccTitle = new St.Label({
             style_class: 'dynamic-island-cc-title',
-            text: '',
+            text: 'Control Center',
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+            x_align: Clutter.ActorAlign.CENTER,
+        });
+        
+        // Spacer kanan penyeimbang agar judul persis di tengah
+        const ccHeaderRightSpacer = new St.Widget({ width: 34, height: 34 });
+
+        this._ccHeaderRow.add_child(this._ccBtnClose);
+        this._ccHeaderRow.add_child(this._ccTitle);
+        this._ccHeaderRow.add_child(ccHeaderRightSpacer);
+        this._controlCenterBox.add_child(this._ccHeaderRow);
+
+        // 2. Baris Atas: Cluster 2x2 Lingkaran & Kartu Now Playing
+        this._ccTopRow = new St.BoxLayout({
+            style_class: 'dynamic-island-cc-top-row',
+            vertical: false,
+            x_expand: true,
+        });
+
+        // 2A. Cluster 2x2 Tombol Lingkaran
+        this._ccClusterLayout = new Clutter.GridLayout({
+            column_spacing: 8,
+            row_spacing: 8,
+            column_homogeneous: true,
+            row_homogeneous: true,
+        });
+        this._ccCluster = new St.Widget({
+            style_class: 'dynamic-island-cc-cluster',
+            layout_manager: this._ccClusterLayout,
+            y_align: Clutter.ActorAlign.FILL,
+        });
+
+        // Tombol Wi-Fi
+        this._ccBtnWifi = new St.Button({
+            style_class: 'dynamic-island-cc-circle-btn',
+            child: new St.Icon({ icon_name: 'network-wireless-signal-excellent-symbolic', icon_size: 20 }),
+            can_focus: true,
+        });
+        this._ccBtnWifi.connect('clicked', () => {
+            this._cc.toggleWifi();
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 350, () => {
+                this._syncControlCenterUI();
+                return GLib.SOURCE_REMOVE;
+            });
+        });
+
+        // Tombol Bluetooth
+        this._ccBtnBt = new St.Button({
+            style_class: 'dynamic-island-cc-circle-btn',
+            child: new St.Icon({ icon_name: 'bluetooth-active-symbolic', icon_size: 20 }),
+            can_focus: true,
+        });
+        this._ccBtnBt.connect('clicked', () => {
+            this._cc.toggleBluetooth();
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 350, () => {
+                this._syncControlCenterUI();
+                return GLib.SOURCE_REMOVE;
+            });
+        });
+
+        // Tombol Mode Daya / Performa
+        this._ccBtnPower = new St.Button({
+            style_class: 'dynamic-island-cc-circle-btn',
+            child: new St.Icon({ icon_name: 'power-profile-balanced-symbolic', icon_size: 20 }),
+            can_focus: true,
+        });
+        this._ccBtnPower.connect('clicked', () => {
+            this._cc.togglePowerMode();
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 200, () => {
+                this._syncControlCenterUI();
+                return GLib.SOURCE_REMOVE;
+            });
+        });
+
+        // Tombol Airplane Mode
+        this._ccBtnAirplane = new St.Button({
+            style_class: 'dynamic-island-cc-circle-btn',
+            child: new St.Icon({ icon_name: 'airplane-mode-symbolic', icon_size: 20 }),
+            can_focus: true,
+        });
+        this._ccBtnAirplane.connect('clicked', () => {
+            this._cc.toggleAirplaneMode();
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 350, () => {
+                this._syncControlCenterUI();
+                return GLib.SOURCE_REMOVE;
+            });
+        });
+
+        this._ccClusterLayout.attach(this._ccBtnWifi,     0, 0, 1, 1);
+        this._ccClusterLayout.attach(this._ccBtnBt,       1, 0, 1, 1);
+        this._ccClusterLayout.attach(this._ccBtnPower,    0, 1, 1, 1);
+        this._ccClusterLayout.attach(this._ccBtnAirplane, 1, 1, 1, 1);
+        this._ccTopRow.add_child(this._ccCluster);
+
+        // 2B. Kartu Now Playing Kanan
+        this._ccMediaBox = new St.BoxLayout({
+            style_class: 'dynamic-island-cc-media',
+            vertical: true,
+            x_expand: true,
+        });
+
+        this._ccMediaTopRow = new St.BoxLayout({
+            style_class: 'dynamic-island-cc-media-row',
+            vertical: false,
             x_expand: true,
             y_align: Clutter.ActorAlign.CENTER,
         });
-        this._ccTitle.clutter_text.ellipsize = 0;
 
-        this._ccActionsRow = new St.BoxLayout({
-            style_class: 'dynamic-island-cc-actions',
-            vertical: false,
-            x_align: Clutter.ActorAlign.END,
+        this._ccMediaArt = new St.Icon({
+            icon_size: 48,
+            icon_name: 'audio-x-generic-symbolic',
+            style_class: 'dynamic-island-cc-media-art',
+        });
+        this._ccMediaInfo = new St.BoxLayout({
+            style_class: 'dynamic-island-cc-media-info',
+            vertical: true,
+            x_expand: true,
             y_align: Clutter.ActorAlign.CENTER,
         });
-        this._btnScreenshot = new St.Button({
-            style_class: 'dynamic-island-cc-circle-btn',
-            child: new St.Icon({ icon_name: 'camera-photo-symbolic', icon_size: 14 }),
-            can_focus: true,
+        this._ccMediaTitle = new St.Label({
+            style_class: 'dynamic-island-cc-media-title',
+            text: 'Tidak Ada Media',
+            y_align: Clutter.ActorAlign.CENTER,
         });
-        this._btnSettings = new St.Button({
-            style_class: 'dynamic-island-cc-circle-btn',
-            child: new St.Icon({ icon_name: 'preferences-system-symbolic', icon_size: 14 }),
-            can_focus: true,
-        });
-        this._btnLock = new St.Button({
-            style_class: 'dynamic-island-cc-circle-btn',
-            child: new St.Icon({ icon_name: 'system-lock-screen-symbolic', icon_size: 14 }),
-            can_focus: true,
-        });
-        this._btnPower = new St.Button({
-            style_class: 'dynamic-island-cc-circle-btn power',
-            child: new St.Icon({ icon_name: 'system-shutdown-symbolic', icon_size: 14 }),
-            can_focus: true,
-        });
-        this._ccActionsRow.add_child(this._btnScreenshot);
-        this._ccActionsRow.add_child(this._btnSettings);
-        this._ccActionsRow.add_child(this._btnLock);
-        this._ccActionsRow.add_child(this._btnPower);
-        this._ccHeaderRow.add_child(this._ccTitle);
-        this._ccHeaderRow.add_child(this._ccActionsRow);
-        this._controlCenterBox.add_child(this._ccHeaderRow);
+        this._ccMediaTitle.clutter_text.ellipsize = 3;
 
-        this._ccGridLayout = new Clutter.GridLayout({
+        this._ccMediaArtist = new St.Label({
+            style_class: 'dynamic-island-cc-media-artist',
+            text: 'Siap memutar musik',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._ccMediaArtist.clutter_text.ellipsize = 3;
+        this._ccMediaInfo.add_child(this._ccMediaTitle);
+        this._ccMediaInfo.add_child(this._ccMediaArtist);
+
+        this._ccPlayBtn = new St.Button({
+            style_class: 'dynamic-island-cc-play-btn',
+            child: new St.Icon({ icon_name: 'media-playback-start-symbolic', icon_size: 16 }),
+            can_focus: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._ccPlayBtn.connect('clicked', () => this._media?.togglePlayPause());
+
+        this._ccMediaTopRow.add_child(this._ccMediaArt);
+        this._ccMediaTopRow.add_child(this._ccMediaInfo);
+        this._ccMediaTopRow.add_child(this._ccPlayBtn);
+
+        // Kapsul Tebal Scrubber / Progress Bar
+        this._ccScrubTrack = new St.Widget({
+            style_class: 'dynamic-island-cc-scrub',
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+            reactive: true,
+        });
+        this._ccScrubFill = new St.Widget({
+            style_class: 'dynamic-island-cc-scrub-fill',
+            x_align: Clutter.ActorAlign.START,
+            y_align: Clutter.ActorAlign.FILL,
+            width: 80,
+        });
+        this._ccScrubTrack.add_child(this._ccScrubFill);
+
+        // Klik Scrubber untuk seek lagu
+        this._ccScrubTrack.connect('button-press-event', (_a, event) => {
+            if (!this._currentMedia?.canSeek) return Clutter.EVENT_STOP;
+            const duration = this._currentMedia?.length || 0;
+            if (duration <= 0) return Clutter.EVENT_STOP;
+
+            const coords = event.get_coords();
+            const x = coords[0] !== undefined ? coords[0] : 0;
+            const [trackX] = this._ccScrubTrack.get_transformed_position();
+            const trackW = this._ccScrubTrack.width || 1;
+            const ratio = Math.max(0, Math.min(1, (x - trackX) / trackW));
+            const target = ratio * duration;
+
+            this._ccScrubFill.width = Math.floor(trackW * ratio);
+            this._media?.seek(target);
+            return Clutter.EVENT_STOP;
+        });
+
+        this._ccMediaBox.add_child(this._ccMediaTopRow);
+        this._ccMediaBox.add_child(this._ccScrubTrack);
+        this._ccTopRow.add_child(this._ccMediaBox);
+        this._controlCenterBox.add_child(this._ccTopRow);
+
+        // 3. Grid Tombol Kotak Bawah (Ubin 20px Radius)
+        this._ccBottomGrid = new Clutter.GridLayout({
             column_spacing: 10,
             row_spacing: 10,
             column_homogeneous: true,
             row_homogeneous: true,
         });
-
-        this._ccGrid = new St.Widget({
-            style_class: 'dynamic-island-cc-grid',
-            layout_manager: this._ccGridLayout,
+        this._ccGridContainer = new St.Widget({
+            layout_manager: this._ccBottomGrid,
             x_expand: true,
-            y_expand: true,
         });
 
-        // Ubin 1: Wi-Fi
-        this._tileDataWifi = this._createUnifiedTile({
-            id: 'wifi',
-            iconName: 'network-wireless-signal-excellent-symbolic',
-            title: 'Wi-Fi',
-            defaultSub: 'On',
-            hasChevron: true,
-            onCircleClick: () => {
-                this._cc.toggleWifi();
-                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 350, () => {
-                    this._syncControlCenterUI();
-                    return GLib.SOURCE_REMOVE;
-                });
-            },
-            onChevronClick: () => {
-                this._collapse();
-                this._cc.openWifiSettings();
-            },
+        // Helper pembuat tombol kotak
+        const makeSqBtn = (iconName, onClick) => {
+            const btn = new St.Button({
+                style_class: 'dynamic-island-cc-sq-btn',
+                child: new St.Icon({ icon_name: iconName, icon_size: 20 }),
+                can_focus: true,
+                x_align: Clutter.ActorAlign.CENTER,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            if (onClick) btn.connect('clicked', onClick);
+            return btn;
+        };
+
+        // Baris 1 Ubin (6 Ikon)
+        this._sqBtnNight = makeSqBtn('night-light-symbolic', () => {
+            this._cc.toggleNightLight();
+            this._syncControlCenterUI();
+        });
+        this._sqBtnDark = makeSqBtn('weather-clear-night-symbolic', () => {
+            this._cc.toggleDarkMode();
+            this._syncControlCenterUI();
+        });
+        this._sqBtnRecord = makeSqBtn('media-record-symbolic', () => {
+            this._collapse();
+            this._cc.openScreenshot(); // Mode rekam / screenshot bawaan GNOME
+        });
+        this._sqBtnScreenshot = makeSqBtn('camera-photo-symbolic', () => {
+            this._collapse();
+            this._cc.openScreenshot();
+        });
+        this._sqBtnLock = makeSqBtn('system-lock-screen-symbolic', () => {
+            this._collapse();
+            this._cc.lockScreen();
+        });
+        this._sqBtnSearch = makeSqBtn('system-search-symbolic', () => {
+            this._collapse();
+            Main.overview.show();
         });
 
-        // Ubin 2: Bluetooth
-        this._tileDataBt = this._createUnifiedTile({
-            id: 'bluetooth',
-            iconName: 'bluetooth-active-symbolic',
-            title: 'Bluetooth',
-            defaultSub: 'Off',
-            onCircleClick: () => {
-                this._cc.toggleBluetooth();
-                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 350, () => {
-                    this._syncControlCenterUI();
-                    return GLib.SOURCE_REMOVE;
-                });
-            },
+        // Baris 2 Ubin (Aksi Sistem)
+        this._sqBtnSettings = makeSqBtn('preferences-system-symbolic', () => {
+            this._collapse();
+            this._cc.openSettings();
+        });
+        this._sqBtnShutdown = makeSqBtn('system-shutdown-symbolic', () => {
+            this._collapse();
+            this._cc.openPowerMenu();
         });
 
-        // Ubin 3: Airplane
-        this._tileDataAirplane = this._createUnifiedTile({
-            id: 'airplane',
-            iconName: 'airplane-mode-symbolic',
-            title: 'Airplane',
-            defaultSub: 'Off',
-            onCircleClick: () => {
-                this._cc.toggleAirplaneMode();
-                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 350, () => {
-                    this._syncControlCenterUI();
-                    return GLib.SOURCE_REMOVE;
-                });
-            },
-        });
+        // Pasang ke Clutter Grid (Kolom, Baris, SpanKolom, SpanBaris)
+        this._ccBottomGrid.attach(this._sqBtnNight,      0, 0, 1, 1);
+        this._ccBottomGrid.attach(this._sqBtnDark,       1, 0, 1, 1);
+        this._ccBottomGrid.attach(this._sqBtnRecord,     2, 0, 1, 1);
+        this._ccBottomGrid.attach(this._sqBtnScreenshot, 3, 0, 1, 1);
+        this._ccBottomGrid.attach(this._sqBtnLock,       4, 0, 1, 1);
+        this._ccBottomGrid.attach(this._sqBtnSearch,     5, 0, 1, 1);
 
-        // Ubin 4: Power
-        this._tileDataPower = this._createUnifiedTile({
-            id: 'powermode',
-            iconName: 'power-profile-balanced-symbolic',
-            title: 'Power',
-            defaultSub: 'Balanced',
-            onCircleClick: () => {
-                this._cc.togglePowerMode();
-                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 200, () => {
-                    this._syncControlCenterUI();
-                    return GLib.SOURCE_REMOVE;
-                });
-            },
-        });
+        this._ccBottomGrid.attach(this._sqBtnSettings,   0, 1, 1, 1);
+        this._ccBottomGrid.attach(this._sqBtnShutdown,   1, 1, 1, 1);
 
-        // Ubin 5: Dark Style
-        this._tileDataDark = this._createUnifiedTile({
-            id: 'darkmode',
-            iconName: 'weather-clear-night-symbolic',
-            title: 'Dark Style',
-            defaultSub: 'On',
-            onCircleClick: () => {
-                this._cc.toggleDarkMode();
-                this._syncControlCenterUI();
-            },
-        });
-
-        // Ubin 6: Night Light
-        this._tileDataNight = this._createUnifiedTile({
-            id: 'nightlight',
-            iconName: 'night-light-symbolic',
-            title: 'Night Light',
-            defaultSub: 'Off',
-            onCircleClick: () => {
-                this._cc.toggleNightLight();
-                this._syncControlCenterUI();
-            },
-        });
-
-        this._ccGridLayout.attach(this._tileDataWifi.tile,     0, 0, 1, 1);
-        this._ccGridLayout.attach(this._tileDataBt.tile,       1, 0, 1, 1);
-        this._ccGridLayout.attach(this._tileDataAirplane.tile, 0, 1, 1, 1);
-        this._ccGridLayout.attach(this._tileDataPower.tile,    1, 1, 1, 1);
-        this._ccGridLayout.attach(this._tileDataDark.tile,     0, 2, 1, 1);
-        this._ccGridLayout.attach(this._tileDataNight.tile,    1, 2, 1, 1);
-
-        this._controlCenterBox.add_child(this._ccGrid);
+        this._controlCenterBox.add_child(this._ccGridContainer);
         this._island.add_child(this._controlCenterBox);
 
         Main.uiGroup.add_child(this._island);
         this._reposition(this._idleWidth);
 
         this._cc = new ControlCenterManager(() => this._syncControlCenterUI());
-
-        // Aksi Tombol Header Control Center
-        this._btnScreenshot.connect('clicked', () => {
-            this._collapse();
-            this._cc.openScreenshot();
-        });
-        this._btnSettings.connect('clicked', () => {
-            this._collapse();
-            this._cc.openSettings();
-        });
-        this._btnLock.connect('clicked', () => {
-            this._collapse();
-            this._cc.lockScreen();
-        });
-        this._btnPower.connect('clicked', () => {
-            this._collapse();
-            this._cc.openPowerMenu();
-        });
 
         // Update Jam Standby
         this._updateClock();
@@ -839,7 +940,7 @@ export default class DynamicIslandExtension extends Extension {
         });
         this._recordStopBtn.connect('clicked', () => this._recorder.stopRecordingSession());
 
-        // Progress Track Seekbar
+        // Progress Track Seekbar (Media View Utama)
         this._progressTrack.connect('button-press-event', (_a, event) => {
             if (!this._currentMedia?.canSeek) return Clutter.EVENT_STOP;
             this._isDraggingSeek = true;
@@ -878,7 +979,7 @@ export default class DynamicIslandExtension extends Extension {
         // ================= KLIK KANAN: BUKA CONTROL CENTER KAPAN SAJA =================
         this._island.connect('button-press-event', (_actor, event) => {
             const button = event.get_button();
-            if (button === 3) { // 3 = Tombol Klik Kanan Mouse
+            if (button === 3) { // Klik Kanan Mouse
                 if (this._isControlCenterOpen) {
                     this._collapse();
                 } else {
@@ -899,7 +1000,6 @@ export default class DynamicIslandExtension extends Extension {
                     GLib.source_remove(this._unhoverTimeoutId);
                     this._unhoverTimeoutId = null;
                 }
-                // Jika sedang membuka Control Center via Klik Kanan, jangan ditimpa
                 if (this._isControlCenterOpen) return;
 
                 if (!this._isExpanded && !this._isProcessingQueue) {
@@ -981,84 +1081,14 @@ export default class DynamicIslandExtension extends Extension {
         });
     }
 
-    // ================= PABRIK UBIN KONTROL =================
-    _createUnifiedTile({ id, iconName, title, defaultSub, hasChevron, onCircleClick, onChevronClick }) {
-        const tile = new St.BoxLayout({
-            style_class: 'dynamic-island-cc-tile',
-            vertical: false,
-            x_expand: true,
-            y_expand: true,
-            x_align: Clutter.ActorAlign.FILL,
-            y_align: Clutter.ActorAlign.FILL,
-            reactive: true,
-        });
-
-        const circleBtn = new St.Button({
-            style_class: `dynamic-island-cc-tile-circle ${id}`,
-            can_focus: true,
-            x_align: Clutter.ActorAlign.CENTER,
-            y_align: Clutter.ActorAlign.CENTER,
-            child: new St.Icon({ icon_name: iconName, icon_size: 18 }),
-        });
-        if (onCircleClick) circleBtn.connect('clicked', onCircleClick);
-
-        const textBox = new St.BoxLayout({
-            vertical: true,
-            x_expand: true,
-            y_align: Clutter.ActorAlign.CENTER,
-            style_class: 'dynamic-island-cc-tile-textbox',
-            reactive: true,
-        });
-
-        if (onCircleClick) {
-            textBox.connect('button-press-event', () => {
-                onCircleClick();
-                return Clutter.EVENT_STOP;
-            });
-        }
-        
-        const titleLabel = new St.Label({
-            text: title,
-            style_class: 'dynamic-island-cc-tile-title',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        titleLabel.clutter_text.ellipsize = 3;
-        titleLabel.clutter_text.single_line_mode = true;
-
-        const subLabel = new St.Label({
-            text: defaultSub,
-            style_class: 'dynamic-island-cc-tile-sub',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        subLabel.clutter_text.ellipsize = 3;
-        subLabel.clutter_text.single_line_mode = true;
-
-        textBox.add_child(titleLabel);
-        textBox.add_child(subLabel);
-
-        tile.add_child(circleBtn);
-        tile.add_child(textBox);
-
-        if (hasChevron) {
-            const chevronBtn = new St.Button({
-                style_class: 'dynamic-island-cc-tile-chevron',
-                child: new St.Icon({ icon_name: 'go-next-symbolic', icon_size: 13 }),
-                can_focus: true,
-                x_align: Clutter.ActorAlign.END,
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-            if (onChevronClick) chevronBtn.connect('clicked', onChevronClick);
-            tile.add_child(chevronBtn);
-        }
-
-        return { tile, circleBtn, titleLabel, subLabel };
-    }
-
     // ================= CONTROL CENTER CONTROLLER =================
     _expandControlCenter() {
         if (!this._island) return;
         this._isExpanded = true;
         this._isControlCenterOpen = true;
+
+        // MENAMBAHKAN KELAS KHUSUS AGAR BACKGROUND PILL MENJADI KACA
+        this._island.add_style_class_name('dynamic-island-cc-expanded');
 
         this._idleBox.visible = false;
         this._compactBox.visible = false;
@@ -1072,12 +1102,7 @@ export default class DynamicIslandExtension extends Extension {
 
         this._syncControlCenterUI();
 
-        const [, naturalHeight] = this._controlCenterBox.get_preferred_height(this._mediaExpandedWidth);
-        const targetHeight = (naturalHeight && naturalHeight > 200)
-            ? Math.max(this._ccExpandedHeight, naturalHeight + 6)
-            : this._ccExpandedHeight;
-
-        this._repositionAndResize(this._mediaExpandedWidth, targetHeight, 320, Clutter.AnimationMode.EASE_OUT_BACK);
+        this._repositionAndResize(this._ccExpandedWidth, this._ccExpandedHeight, 320, Clutter.AnimationMode.EASE_OUT_BACK);
         this._controlCenterBox.ease({
             opacity: 255,
             duration: 200,
@@ -1090,46 +1115,54 @@ export default class DynamicIslandExtension extends Extension {
         if (!this._cc) return;
 
         // Dark Mode
-        const isDark = this._cc.isDarkMode();
-        if (isDark) this._tileDataDark.circleBtn.add_style_class_name('active');
-        else this._tileDataDark.circleBtn.remove_style_class_name('active');
-        this._tileDataDark.subLabel.set_text(isDark ? 'On' : 'Off');
+        if (this._cc.isDarkMode()) this._sqBtnDark.add_style_class_name('on');
+        else this._sqBtnDark.remove_style_class_name('on');
 
         // Night Light
-        const isNight = this._cc.isNightLight();
-        if (isNight) this._tileDataNight.circleBtn.add_style_class_name('active');
-        else this._tileDataNight.circleBtn.remove_style_class_name('active');
-        this._tileDataNight.subLabel.set_text(isNight ? 'On' : 'Off');
+        if (this._cc.isNightLight()) this._sqBtnNight.add_style_class_name('on');
+        else this._sqBtnNight.remove_style_class_name('on');
 
         // Wi-Fi
-        const isWifi = this._cc.isWifiEnabled();
-        if (isWifi) this._tileDataWifi.circleBtn.add_style_class_name('active');
-        else this._tileDataWifi.circleBtn.remove_style_class_name('active');
-        this._tileDataWifi.subLabel.set_text(isWifi ? this._cc.getWifiSsid() : 'Off');
+        if (this._cc.isWifiEnabled()) this._ccBtnWifi.add_style_class_name('on');
+        else this._ccBtnWifi.remove_style_class_name('on');
 
         // Bluetooth
-        const isBt = this._cc.isBluetoothEnabled();
-        if (isBt) this._tileDataBt.circleBtn.add_style_class_name('active');
-        else this._tileDataBt.circleBtn.remove_style_class_name('active');
-        this._tileDataBt.subLabel.set_text(isBt ? 'On' : 'Off');
+        if (this._cc.isBluetoothEnabled()) this._ccBtnBt.add_style_class_name('on');
+        else this._ccBtnBt.remove_style_class_name('on');
 
         // Airplane Mode
-        const isAirplane = this._cc.isAirplaneMode();
-        if (isAirplane) this._tileDataAirplane.circleBtn.add_style_class_name('active');
-        else this._tileDataAirplane.circleBtn.remove_style_class_name('active');
-        this._tileDataAirplane.subLabel.set_text(isAirplane ? 'On' : 'Off');
+        if (this._cc.isAirplaneMode()) this._ccBtnAirplane.add_style_class_name('on');
+        else this._ccBtnAirplane.remove_style_class_name('on');
 
         // Power Mode
         const pMode = this._cc.getPowerProfile();
         if (pMode === 'Performance' || pMode === 'Power Saver') {
-            this._tileDataPower.circleBtn.add_style_class_name('active');
+            this._ccBtnPower.add_style_class_name('on');
         } else {
-            this._tileDataPower.circleBtn.remove_style_class_name('active');
+            this._ccBtnPower.remove_style_class_name('on');
         }
 
-        let subText = pMode;
-        if (pMode === 'Power Saver') subText = 'Saver';
-        this._tileDataPower.subLabel.set_text(subText);
+        // Sinkronisasi Now Playing di dalam Control Center
+        if (this._currentMedia && this._currentMedia.status !== 'Stopped') {
+            this._ccMediaTitle.set_text(this._currentMedia.title || 'Sedang Diputar');
+            this._ccMediaArtist.set_text(this._currentMedia.artist || 'Tidak Diketahui');
+            this._ccPlayBtn.child.icon_name = (this._currentMedia.status === 'Playing')
+                ? 'media-playback-pause-symbolic'
+                : 'media-playback-start-symbolic';
+
+            const duration = this._currentMedia.length || 0;
+            if (duration > 0) {
+                const pos = this._media?.getPosition() ?? 0;
+                const ratio = Math.max(0, Math.min(1, pos / duration));
+                const trackW = this._ccScrubTrack.width || 210;
+                this._ccScrubFill.width = Math.max(16, Math.floor(trackW * ratio));
+            }
+        } else {
+            this._ccMediaTitle.set_text('Tidak Ada Media');
+            this._ccMediaArtist.set_text('Siap memutar musik');
+            this._ccPlayBtn.child.icon_name = 'media-playback-start-symbolic';
+            this._ccScrubFill.width = 40;
+        }
     }
 
     // ================= SCREEN RECORDING =================
@@ -1308,7 +1341,7 @@ export default class DynamicIslandExtension extends Extension {
         if (this._isCountingDown) return this._countdownWidth;
         if (this._isExpanded) {
             if (this._isProcessingQueue) return this._notifWidth;
-            if (this._isControlCenterOpen) return this._mediaExpandedWidth;
+            if (this._isControlCenterOpen) return this._ccExpandedWidth;
             if (this._recorder?.isRecording) return this._mediaExpandedWidth;
             if (this._mediaActive) return this._mediaExpandedWidth;
             return this._mediaExpandedWidth;
@@ -1425,6 +1458,9 @@ export default class DynamicIslandExtension extends Extension {
         this._isExpanded = false;
         this._isControlCenterOpen = false;
 
+        // MENGHAPUS KELAS KACA KETIKA MENUTUP CC
+        this._island.remove_style_class_name('dynamic-island-cc-expanded');
+
         let targetWidth = this._idleWidth;
         if (this._recorder?.isRecording) targetWidth = this._compactRecordWidth;
         else if (this._mediaActive) targetWidth = this._compactMediaWidth;
@@ -1474,6 +1510,8 @@ export default class DynamicIslandExtension extends Extension {
 
         this._isExpanded = false;
         this._isControlCenterOpen = false;
+        this._island.remove_style_class_name('dynamic-island-cc-expanded');
+
         let targetWidth = this._idleWidth;
         if (this._recorder?.isRecording) targetWidth = this._compactRecordWidth;
         else if (this._mediaActive) targetWidth = this._compactMediaWidth;
@@ -1499,11 +1537,10 @@ export default class DynamicIslandExtension extends Extension {
         });
     }
 
-    // ================= MPRIS UPDATE DENGAN TIMER PAUSE =================
+    // ================= MPRIS UPDATE & SYNC NOW PLAYING =================
     _onMediaUpdate(state) {
         this._currentMedia = state;
 
-        // Reset timer jeda pause setiap ada perubahan data
         if (this._pauseTimeoutId) {
             GLib.source_remove(this._pauseTimeoutId);
             this._pauseTimeoutId = null;
@@ -1523,18 +1560,17 @@ export default class DynamicIslandExtension extends Extension {
                 }
                 this._collapse();
             }
+            this._syncControlCenterUI();
             return;
         }
 
-        // Penanganan Status: Playing vs Paused
         if (state.status === 'Playing') {
             this._mediaActive = true;
         } else if (state.status === 'Paused') {
-            // Berikan jeda 8 detik sebelum benar-benar kembali ke jam digital
             if (this._mediaActive) {
                 this._pauseTimeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 8, () => {
                     this._pauseTimeoutId = null;
-                    this._mediaActive = false; // Izinkan Control Center terbuka kembali lewat hover
+                    this._mediaActive = false;
 
                     if (!this._isExpanded && !this._recorder?.isRecording && !this._isChargingBannerActive && !this._isHudActive && !this._isBtBannerActive) {
                         this._compactBox.ease({
@@ -1564,7 +1600,6 @@ export default class DynamicIslandExtension extends Extension {
             : 'media-playback-start-symbolic';
         this._playBtn.child.icon_name = playIcon;
 
-        // Tampilkan compact media jika musik aktif dan tidak sedang mode expanded lain
         if (this._mediaActive) {
             this._idleBox.visible = false;
             if (!this._isExpanded && !this._isProcessingQueue && !this._isChargingBannerActive && !this._isHudActive && !this._isBtBannerActive && !this._recorder?.isRecording && !this._isControlCenterOpen) {
@@ -1577,6 +1612,9 @@ export default class DynamicIslandExtension extends Extension {
         if (this._isExpanded) {
             this._updateProgressUI();
         }
+
+        // Sinkronisasi otomatis ke tampilan Control Center jika sedang terbuka
+        this._syncControlCenterUI();
     }
 
     _loadCoverArt(url) {
@@ -1618,6 +1656,8 @@ export default class DynamicIslandExtension extends Extension {
     _setMediaIcon({ iconName = null, pixbuf = null }) {
         this._mediaIcon.gicon = null;
         this._compactIcon.gicon = null;
+        this._ccMediaArt.gicon = null;
+
         if (pixbuf) {
             try {
                 const [ok, buffer] = pixbuf.save_to_bufferv('png', [], []);
@@ -1625,12 +1665,14 @@ export default class DynamicIslandExtension extends Extension {
                     const bytesIcon = Gio.BytesIcon.new(GLib.Bytes.new(buffer));
                     this._mediaIcon.gicon = bytesIcon;
                     this._compactIcon.gicon = bytesIcon;
+                    this._ccMediaArt.gicon = bytesIcon;
                     return;
                 }
             } catch (_) {}
         }
         this._mediaIcon.icon_name = iconName || 'audio-x-generic-symbolic';
         this._compactIcon.icon_name = iconName || 'audio-x-generic-symbolic';
+        this._ccMediaArt.icon_name = iconName || 'audio-x-generic-symbolic';
     }
 
     _formatTime(micros) {
@@ -1647,12 +1689,17 @@ export default class DynamicIslandExtension extends Extension {
 
         const pos = this._media?.getPosition() ?? 0;
         const ratio = Math.max(0, Math.min(1, pos / duration));
+        
+        // Update bar expanded media utama
         const trackW = 330;
         const fillW = Math.floor(trackW * ratio);
-
         this._progressFill.width = Math.max(0, fillW);
         this._timeLabel.set_text(this._formatTime(pos));
         this._durationLabel.set_text(this._formatTime(duration));
+
+        // Update bar scrub kartu Now Playing di Control Center
+        const ccTrackW = this._ccScrubTrack.width || 210;
+        this._ccScrubFill.width = Math.max(16, Math.floor(ccTrackW * ratio));
     }
 
     _seekFromEvent(event) {

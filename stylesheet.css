@@ -1,8 +1,16 @@
-/* ================= 1. PILL UTAMA (PURE BLACK OLED) ================= */
+/* ================= 1. PILL UTAMA (PURE BLACK OLED & GLASS MODE) ================= */
 .dynamic-island-pill {
     background-color: #000000;
     border-radius: 36px;
     border: 1px solid rgba(255, 255, 255, 0.08);
+    transition: background-color 200ms ease, border-radius 200ms ease;
+}
+
+/* Transisi Pill menjadi "Glass" khusus ketika Control Center Terbuka */
+.dynamic-island-pill.dynamic-island-cc-expanded {
+    background-color: rgba(150, 138, 122, 0.88); /* <-- Diubah dari 0.42 ke 0.88 agar lebih pekat/tebal */
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 44px;
 }
 
 /* ================= 0. JAM DIGITAL IDLE (TENGAH NOTCH) ================= */
@@ -277,7 +285,7 @@
     font-weight: 700;
 }
 
-/* ================= 7. PRIVACY INDICATOR DOTS (IPHONE STYLE) ================= */
+/* ================= 7. PRIVACY INDICATOR DOTS ================= */
 .dynamic-island-privacy-box {
     spacing: 5px;
     padding-right: 14px;
@@ -305,7 +313,7 @@
     box-shadow: 0 0 7px #ff9f0a;
 }
 
-/* ================= 8. COMPACT TIMER (COUNTDOWN ORANYE KECIL) ================= */
+/* ================= 8. COMPACT TIMER ================= */
 .dynamic-island-compact-timer {
     padding: 0 12px;
 }
@@ -329,7 +337,6 @@
     padding-right: 2px;
 }
 
-/* ================= TIMER FINISHED ALERT BANNER ================= */
 .dynamic-island-timer-alert-box {
     padding: 0 16px;
     spacing: 12px;
@@ -420,7 +427,7 @@
     border-radius: 999px;
 }
 
-/* ================= 9. PRESET MULAI CEPAT ================= */
+/* ================= 10. PRESET MULAI CEPAT ================= */
 .dynamic-island-timer-preset-view {
     padding: 0 4px;
     spacing: 12px;
@@ -480,7 +487,7 @@
     background-color: rgba(255, 159, 10, 0.35);
 }
 
-/* ================= 10. SCREEN RECORDING ================= */
+/* ================= 11. SCREEN RECORDING ================= */
 .dynamic-island-countdown-box {
     padding: 0 4px;
 }
@@ -511,11 +518,6 @@
     padding-right: 2px;
 }
 
-/* Kartu Expanded Screen Recording — satu baris, ala iOS Live Activity.
-   Tidak lagi memakai bar/garis merah penuh di bawah, karena durasi
-   recording tidak terbatas sehingga "progress bar" tidak punya makna
-   dan sebelumnya tampil sebagai garis merah statis yang polos & rata
-   tepi (terlihat jelek, mentok ke sudut pill). */
 .dynamic-island-record-expanded {
     padding: 0 22px;
     spacing: 16px;
@@ -529,7 +531,6 @@
     spacing: 6px;
 }
 
-/* Titik merah kecil di depan label, versi mini dari dot compact */
 .dynamic-island-record-dot-mini {
     width: 6px;
     height: 6px;
@@ -568,131 +569,157 @@
     background-color: #d70015;
 }
 
-/* ================= 11. IOS CONTROL CENTER CARD (GRID 100% SIMETRIS) ================= */
+/* ================= 12. VISIONOS GLASS STYLE CONTROL CENTER ================= */
 .dynamic-island-cc-box {
-    padding: 16px 16px 20px 16px; /* Padding bawah 20px memberi jarak proporsional dan tidak mepet */
-    spacing: 12px;
-    background: transparent;
+    padding: 22px 20px 22px 20px;
+    spacing: 14px;
+    /* Dihapus: background-color dan border, karena sudah digantikan oleh .dynamic-island-cc-expanded di pill utama */
+    background-color: transparent; 
     border: none;
-    box-shadow: none;
 }
 
-/* Header & Tombol Cepat Sistem */
+/* Header & Tombol Close */
 .dynamic-island-cc-header {
-    padding: 0 2px;
+    min-height: 36px;
+    margin-bottom: 4px;
+}
+
+.dynamic-island-cc-close {
+    width: 34px;
+    height: 34px;
+    border-radius: 17px;
+    background-color: rgba(255, 255, 255, 0.16);
+    color: #ffffff;
+    padding: 0;
+    transition: all 150ms ease;
+}
+
+.dynamic-island-cc-close:hover {
+    background-color: rgba(255, 255, 255, 0.28);
 }
 
 .dynamic-island-cc-title {
     color: #ffffff;
-    font-size: 0.82em;
+    font-size: 1.15em;
     font-weight: 700;
-    letter-spacing: 0.8px;
+    letter-spacing: 0.1px;
 }
 
-.dynamic-island-cc-actions {
-    spacing: 8px;
+/* Baris Atas: Cluster Koneksi + Media */
+.dynamic-island-cc-top-row {
+    spacing: 12px;
+}
+
+/* Cluster 2x2 Lingkaran */
+.dynamic-island-cc-cluster {
+    background-color: rgba(255, 255, 255, 0.10);
+    border-radius: 28px;
+    padding: 10px;
 }
 
 .dynamic-island-cc-circle-btn {
-    width: 32px;
-    height: 32px;
-    border-radius: 999px;
-    background-color: rgba(255, 255, 255, 0.1);
-    color: #ffffff;
+    width: 48px;
+    height: 48px;
+    border-radius: 24px; /* Fix ke px agar membulat presisi */
+    background-color: rgba(255, 255, 255, 0.14);
+    color: rgba(255, 255, 255, 0.85);
     padding: 0;
-    transition: all 160ms ease;
+    border: none;
+    transition: all 180ms ease;
+}
+
+.dynamic-island-cc-circle-btn StIcon {
+    icon-size: 20px;
 }
 
 .dynamic-island-cc-circle-btn:hover {
-    background-color: rgba(255, 255, 255, 0.22);
+    background-color: rgba(255, 255, 255, 0.24);
 }
 
-.dynamic-island-cc-circle-btn.power {
-    background-color: rgba(255, 69, 58, 0.2);
-    color: #ff453a;
-}
-
-.dynamic-island-cc-circle-btn.power:hover {
-    background-color: rgba(255, 69, 58, 0.38);
-}
-
-/* Grid Container */
-.dynamic-island-cc-grid {
-    spacing: 10px;
-    margin-bottom: 2px;
-}
-
-/* Ubin Apple Control Center */
-.dynamic-island-cc-tile {
-    background-color: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 14px;
-    padding: 8px 12px;
-    min-height: 54px;
-    transition: all 160ms ease;
-}
-
-.dynamic-island-cc-tile:hover {
-    background-color: rgba(255, 255, 255, 0.13);
-}
-
-/* Lingkaran Ikon iOS 36x36px Mutlak di Seluruh Tombol */
-.dynamic-island-cc-tile-circle {
-    width: 36px;
-    height: 36px;
-    min-width: 36px;
-    min-height: 36px;
-    max-width: 36px;
-    max-height: 36px;
-    border-radius: 999px;
-    background-color: rgba(255, 255, 255, 0.12);
-    color: #8e8e93;
-    padding: 0;
-    margin-right: 10px;
-    border: none;
-    transition: all 160ms ease;
-}
-
-.dynamic-island-cc-tile-circle:hover {
-    background-color: rgba(255, 255, 255, 0.2);
-}
-
-/* Status Aktif: Biru Resmi Apple (#007aff) */
-.dynamic-island-cc-tile-circle.active {
-    background-color: #007aff !important;
+.dynamic-island-cc-circle-btn.on {
+    background-color: #0a84ff !important;
     color: #ffffff !important;
-    border: none !important;
-    box-shadow: none !important;
 }
 
-/* Wadah Teks */
-.dynamic-island-cc-tile-textbox {
+/* Kartu Now Playing Kanan */
+.dynamic-island-cc-media {
+    background-color: rgba(255, 255, 255, 0.10);
+    border-radius: 28px;
+    padding: 12px 14px;
+    spacing: 10px;
+}
+
+.dynamic-island-cc-media-row {
+    spacing: 12px;
+}
+
+.dynamic-island-cc-media-art {
+    width: 52px;
+    height: 52px;
+    border-radius: 12px;
+    background-color: #1c1c1e;
+}
+
+.dynamic-island-cc-media-info {
     spacing: 2px;
 }
 
-/* Label Teks di dalam Ubin */
-.dynamic-island-cc-tile-title {
+.dynamic-island-cc-media-title {
     color: #ffffff;
-    font-size: 0.86em;
+    font-size: 0.94em;
     font-weight: 700;
 }
 
-.dynamic-island-cc-tile-sub {
-    color: #8e8e93;
-    font-size: 0.72em;
+.dynamic-island-cc-media-artist {
+    color: rgba(255, 255, 255, 0.68);
+    font-size: 0.8em;
     font-weight: 500;
 }
 
-/* Tombol Panah Buka Daftar Wi-Fi */
-.dynamic-island-cc-tile-chevron {
-    color: #8e8e93;
-    padding: 4px;
-    border-radius: 999px;
-    margin-left: 4px;
+.dynamic-island-cc-play-btn {
+    width: 38px;
+    height: 38px;
+    border-radius: 19px; /* Bulat sempurna */
+    background-color: rgba(255, 255, 255, 0.16);
+    color: #ffffff;
+    padding: 0;
     transition: all 150ms ease;
 }
 
-.dynamic-island-cc-tile-chevron:hover {
+.dynamic-island-cc-play-btn:hover {
+    background-color: rgba(255, 255, 255, 0.26);
+}
+
+/* Kapsul Tebal Scrubber / Progress Bar */
+.dynamic-island-cc-scrub {
+    height: 34px; /* Disamakan dengan HTML */
+    border-radius: 17px;
+    background-color: rgba(255, 255, 255, 0.14);
+}
+
+.dynamic-island-cc-scrub-fill {
+    height: 34px;
+    border-radius: 17px;
+    background-color: rgba(255, 255, 255, 0.55);
+}
+
+/* Bottom Grid Tombol Kotak / Ubin 20px Radius */
+.dynamic-island-cc-sq-btn {
+    width: 54px;
+    height: 54px;
+    border-radius: 20px;
+    background-color: rgba(255, 255, 255, 0.10);
     color: #ffffff;
+    padding: 0;
+    border: none;
+    transition: all 180ms ease;
+}
+
+.dynamic-island-cc-sq-btn:hover {
     background-color: rgba(255, 255, 255, 0.18);
+}
+
+.dynamic-island-cc-sq-btn.on {
+    background-color: #0a84ff !important;
+    color: #ffffff !important;
 }
