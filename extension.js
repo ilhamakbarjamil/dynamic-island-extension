@@ -42,7 +42,11 @@ export default class DynamicIslandExtension extends Extension {
         this._timerExpandedWidth  = 385;
         this._timerExpandedHeight = 135;
         this._timerPresetHeight   = 106;
-        this._recordExpandedHeight= 135;
+        this._recordExpandedHeight= 96;
+        // Lebar saat hitung mundur 3-2-1: disamakan dengan idleWidth agar
+        // tetap menutup penuh area jam asli + ikon DND di panel GNOME,
+        // sebelumnya cuma 85px sehingga jam & ikon DND asli mengintip di sisi.
+        this._countdownWidth      = this._idleWidth;
 
         // ======== STATE ========
         this._isExpanded = false;
@@ -64,6 +68,7 @@ export default class DynamicIslandExtension extends Extension {
         this._waitingForMouseLeave = false;
         this._autoCollapseId = null;
         this._unhoverTimeoutId = null;
+        this._recordPulseId = null;
         this._currentMedia = null;
         this._mediaActive = false;
         this._isDraggingSeek = false;
@@ -786,19 +791,13 @@ export default class DynamicIslandExtension extends Extension {
         // ================= 8. EXPANDED SCREEN RECORDING CARD (ALA IOS) =================
         this._recordExpandedBox = new St.BoxLayout({
             style_class: 'dynamic-island-record-expanded',
-            vertical: true,
+            vertical: false,
             x_expand: true,
             y_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
             visible: false,
             opacity: 0,
             reactive: true,
-        });
-
-        this._recordTopRow = new St.BoxLayout({
-            style_class: 'dynamic-island-record-top-row',
-            vertical: false,
-            x_expand: true,
-            y_align: Clutter.ActorAlign.CENTER,
         });
 
         this._recordTextCol = new St.BoxLayout({
@@ -807,10 +806,25 @@ export default class DynamicIslandExtension extends Extension {
             x_expand: true,
             y_align: Clutter.ActorAlign.CENTER,
         });
+
+        // Baris label: titik merah kecil + "SCREEN RECORDING" (merah, khas iOS)
+        this._recordSubLabelRow = new St.BoxLayout({
+            style_class: 'dynamic-island-record-sub-label-row',
+            vertical: false,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._recordExpandedDot = new St.Widget({
+            style_class: 'dynamic-island-record-dot dynamic-island-record-dot-mini',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
         this._recordSubLabel = new St.Label({
             style_class: 'dynamic-island-record-sub-label',
             text: 'SCREEN RECORDING',
+            y_align: Clutter.ActorAlign.CENTER,
         });
+        this._recordSubLabelRow.add_child(this._recordExpandedDot);
+        this._recordSubLabelRow.add_child(this._recordSubLabel);
+
         this._recordBigLabel = new St.Label({
             style_class: 'dynamic-island-record-big-label',
             text: '00:00',
@@ -818,28 +832,20 @@ export default class DynamicIslandExtension extends Extension {
         });
         this._recordBigLabel.clutter_text.ellipsize = 0;
         this._recordBigLabel.clutter_text.single_line_mode = true;
-        this._recordTextCol.add_child(this._recordSubLabel);
+        this._recordTextCol.add_child(this._recordSubLabelRow);
         this._recordTextCol.add_child(this._recordBigLabel);
 
         // Tombol Stop Merah Bundar Khas iOS
         this._recordStopBtn = new St.Button({
             style_class: 'dynamic-island-record-stop-btn',
-            child: new St.Icon({ icon_name: 'media-playback-stop-symbolic', icon_size: 16 }),
+            child: new St.Icon({ icon_name: 'media-playback-stop-symbolic', icon_size: 15 }),
             can_focus: true,
             reactive: true,
-        });
-
-        this._recordTopRow.add_child(this._recordTextCol);
-        this._recordTopRow.add_child(this._recordStopBtn);
-
-        this._recordPulseBar = new St.Widget({
-            style_class: 'dynamic-island-record-pulse-bar',
-            x_expand: true,
             y_align: Clutter.ActorAlign.CENTER,
         });
 
-        this._recordExpandedBox.add_child(this._recordTopRow);
-        this._recordExpandedBox.add_child(this._recordPulseBar);
+        this._recordExpandedBox.add_child(this._recordTextCol);
+        this._recordExpandedBox.add_child(this._recordStopBtn);
         this._island.add_child(this._recordExpandedBox);
 
         Main.uiGroup.add_child(this._island);
@@ -1017,7 +1023,7 @@ export default class DynamicIslandExtension extends Extension {
         this._countdownBox.visible = true;
 
         this._countdownLabel.set_text('3');
-        this._repositionAndResize(85, this._collapsedHeight, 280, Clutter.AnimationMode.EASE_OUT_BACK);
+        this._repositionAndResize(this._countdownWidth, this._collapsedHeight, 280, Clutter.AnimationMode.EASE_OUT_BACK);
         this._countdownBox.ease({ opacity: 255, duration: 180, mode: Clutter.AnimationMode.EASE_OUT_QUAD });
 
         this._countdownTickId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 800, () => {
@@ -1030,6 +1036,7 @@ export default class DynamicIslandExtension extends Extension {
                 this._countdownBox.visible = false;
                 this._compactRecordBox.visible = true;
                 this._repositionAndResize(this._compactRecordWidth, this._collapsedHeight, 280, Clutter.AnimationMode.EASE_OUT_QUAD);
+                this._startRecordPulse();
                 return GLib.SOURCE_REMOVE;
             }
         });
@@ -1048,7 +1055,31 @@ export default class DynamicIslandExtension extends Extension {
         this._isCountingDown = false;
         this._compactRecordBox.visible = false;
         this._recordExpandedBox.visible = false;
+        this._stopRecordPulse();
         this._collapse();
+    }
+
+    // Titik merah "berdenyut" khas indikator recording iOS, dipakai baik
+    // di mode compact maupun expanded, dinyalakan/dimatikan bersamaan.
+    _startRecordPulse() {
+        this._stopRecordPulse();
+        let dim = false;
+        this._recordPulseId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 700, () => {
+            dim = !dim;
+            const targetOpacity = dim ? 90 : 255;
+            this._recordDot?.ease({ opacity: targetOpacity, duration: 550, mode: Clutter.AnimationMode.EASE_IN_OUT_SINE });
+            this._recordExpandedDot?.ease({ opacity: targetOpacity, duration: 550, mode: Clutter.AnimationMode.EASE_IN_OUT_SINE });
+            return GLib.SOURCE_CONTINUE;
+        });
+    }
+
+    _stopRecordPulse() {
+        if (this._recordPulseId) {
+            GLib.source_remove(this._recordPulseId);
+            this._recordPulseId = null;
+        }
+        this._recordDot?.ease({ opacity: 255, duration: 150, mode: Clutter.AnimationMode.EASE_OUT_QUAD });
+        this._recordExpandedDot?.ease({ opacity: 255, duration: 150, mode: Clutter.AnimationMode.EASE_OUT_QUAD });
     }
 
     _expandRecord() {
@@ -1265,7 +1296,7 @@ export default class DynamicIslandExtension extends Extension {
         if (this._isBtBannerActive) return this._bluetoothWidth;
         if (this._isHudActive) return this._hudWidth;
         if (this._isChargingBannerActive) return this._chargingWidth;
-        if (this._isCountingDown) return 85;
+        if (this._isCountingDown) return this._countdownWidth;
         if (this._isExpanded) {
             if (this._isProcessingQueue) return this._notifWidth;
             if (this._recorder?.isRecording) return this._timerExpandedWidth;
@@ -1739,6 +1770,7 @@ export default class DynamicIslandExtension extends Extension {
         this._sourceConnections.clear();
 
         if (this._autoCollapseId) GLib.source_remove(this._autoCollapseId);
+        if (this._recordPulseId) GLib.source_remove(this._recordPulseId);
         if (this._chargingDismissId) GLib.source_remove(this._chargingDismissId);
         if (this._hudDismissId) GLib.source_remove(this._hudDismissId);
         if (this._unhoverTimeoutId) GLib.source_remove(this._unhoverTimeoutId);
