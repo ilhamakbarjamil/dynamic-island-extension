@@ -1,4 +1,5 @@
 1. tampilan pomodoro perlu di revisi
 2. tampilan record perlu di revisi
     2.1. logika ketika di obs screen cast itu otomatis nyala
-    
+3. ketika pesan whatsapp banyak tampilannya tidak elegan
+4. untuk membuka control center haurus tidak sedang play musik atau vidio, kalau sedang play control center tidak bisa terbuka

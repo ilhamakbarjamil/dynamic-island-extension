@@ -277,7 +277,6 @@
     font-weight: 700;
 }
 
-
 /* ================= 7. PRIVACY INDICATOR DOTS (IPHONE STYLE) ================= */
 .dynamic-island-privacy-box {
     spacing: 5px;
@@ -296,18 +295,15 @@
     border-radius: 999px;
 }
 
-/* Kamera Aktif: Hijau Neon khas iOS */
 .dynamic-island-privacy-dot.dot-camera {
     background-color: #30d158;
     box-shadow: 0 0 7px #30d158;
 }
 
-/* Mikrofon Merekam: Oranye Neon khas iOS */
 .dynamic-island-privacy-dot.dot-mic {
     background-color: #ff9f0a;
     box-shadow: 0 0 7px #ff9f0a;
 }
-
 
 /* ================= 8. COMPACT TIMER (COUNTDOWN ORANYE KECIL) ================= */
 .dynamic-island-compact-timer {
@@ -349,7 +345,7 @@
     font-weight: 700;
 }
 
-/* ================= 9. EXPANDED TIMER (DESAIN IDENTIK IPHONE LIVE ACTIVITY) ================= */
+/* ================= 9. EXPANDED TIMER ================= */
 .dynamic-island-timer-expanded {
     padding: 14px 22px 14px 22px;
 }
@@ -362,7 +358,6 @@
     spacing: 16px;
 }
 
-/* Sisi Kiri: Label TIMER + Angka Besar */
 .dynamic-island-timer-text-col {
     spacing: 2px;
 }
@@ -381,7 +376,6 @@
     letter-spacing: 0.5px;
 }
 
-/* Sisi Kanan: Tombol Lingkaran Khas Apple */
 .dynamic-island-timer-actions-col {
     spacing: 14px;
 }
@@ -394,7 +388,6 @@
     transition: all 150ms ease;
 }
 
-/* Tombol Batal: Bundar Gelap [✕] */
 .dynamic-island-timer-circle-btn.cancel {
     background-color: #2c2c2e;
     color: #ffffff;
@@ -404,7 +397,6 @@
     background-color: #3a3a3c;
 }
 
-/* Tombol Pause/Lanjut: Bundar Oranye Khas Apple */
 .dynamic-island-timer-circle-btn.pause {
     background-color: #ff9f0a;
     color: #000000;
@@ -414,7 +406,6 @@
     background-color: #ffb340;
 }
 
-/* Garis Progres Ramping 4px */
 .dynamic-island-timer-bar-track {
     height: 4px;
     background-color: rgba(255, 255, 255, 0.16);
@@ -429,7 +420,7 @@
     border-radius: 999px;
 }
 
-/* ================= 9. PRESET MULAI CEPAT (APPLE CONTROL CENTER TILES) ================= */
+/* ================= 9. PRESET MULAI CEPAT ================= */
 .dynamic-island-timer-preset-view {
     padding: 0 4px;
     spacing: 12px;
@@ -454,7 +445,6 @@
     spacing: 10px;
 }
 
-/* Ubin Kaca Transparan Khas Widget Apple iOS */
 .dynamic-island-preset-tile {
     background-color: rgba(255, 255, 255, 0.08);
     border: 0.5px solid rgba(255, 255, 255, 0.12);
@@ -475,7 +465,6 @@
     background-color: rgba(255, 255, 255, 0.28);
 }
 
-/* Ubin Pomodoro dengan Aksen Oranye Neon Apple */
 .dynamic-island-preset-tile.pomodoro {
     background-color: rgba(255, 159, 10, 0.14);
     border: 0.5px solid rgba(255, 159, 10, 0.45);
@@ -491,21 +480,17 @@
     background-color: rgba(255, 159, 10, 0.35);
 }
 
-
-/* ================= 10. SCREEN RECORDING (ALA IPHONE DYNAMIC ISLAND) ================= */
-
-/* Animasi Hitungan Mundur 3-2-1 */
+/* ================= 10. SCREEN RECORDING ================= */
 .dynamic-island-countdown-box {
     padding: 0 4px;
 }
 
 .dynamic-island-countdown-label {
-    color: #ff453a; /* Merah Apple Recording */
+    color: #ff453a;
     font-size: 1.15em;
     font-weight: 800;
 }
 
-/* Mode Kompak: Titik Merah + Timer */
 .dynamic-island-compact-record {
     padding: 0 14px;
 }
@@ -526,7 +511,6 @@
     padding-right: 2px;
 }
 
-/* Kartu Expanded Screen Recording */
 .dynamic-island-record-expanded {
     padding: 14px 22px 14px 22px;
 }
@@ -553,7 +537,6 @@
     letter-spacing: 0.5px;
 }
 
-/* Tombol Stop Bundar Merah Khas Apple */
 .dynamic-island-record-stop-btn {
     width: 44px;
     height: 44px;
@@ -572,7 +555,6 @@
     background-color: #d70015;
 }
 
-/* Garis Denyut Rekaman Ramping */
 .dynamic-island-record-pulse-bar {
     height: 4px;
     background-color: #ff453a;
@@ -580,4 +562,133 @@
     min-width: 340px;
     margin-top: 8px;
     box-shadow: 0 0 6px rgba(255, 69, 58, 0.6);
+}
+
+/* ================= 11. IOS CONTROL CENTER CARD (GRID 100% SIMETRIS) ================= */
+.dynamic-island-cc-box {
+    padding: 16px 16px 20px 16px; /* Padding bawah 20px memberi jarak proporsional dan tidak mepet */
+    spacing: 12px;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+}
+
+/* Header & Tombol Cepat Sistem */
+.dynamic-island-cc-header {
+    padding: 0 2px;
+}
+
+.dynamic-island-cc-title {
+    color: #ffffff;
+    font-size: 0.82em;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+}
+
+.dynamic-island-cc-actions {
+    spacing: 8px;
+}
+
+.dynamic-island-cc-circle-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 999px;
+    background-color: rgba(255, 255, 255, 0.1);
+    color: #ffffff;
+    padding: 0;
+    transition: all 160ms ease;
+}
+
+.dynamic-island-cc-circle-btn:hover {
+    background-color: rgba(255, 255, 255, 0.22);
+}
+
+.dynamic-island-cc-circle-btn.power {
+    background-color: rgba(255, 69, 58, 0.2);
+    color: #ff453a;
+}
+
+.dynamic-island-cc-circle-btn.power:hover {
+    background-color: rgba(255, 69, 58, 0.38);
+}
+
+/* Grid Container */
+.dynamic-island-cc-grid {
+    spacing: 10px;
+    margin-bottom: 2px;
+}
+
+/* Ubin Apple Control Center */
+.dynamic-island-cc-tile {
+    background-color: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 14px;
+    padding: 8px 12px;
+    min-height: 54px;
+    transition: all 160ms ease;
+}
+
+.dynamic-island-cc-tile:hover {
+    background-color: rgba(255, 255, 255, 0.13);
+}
+
+/* Lingkaran Ikon iOS 36x36px Mutlak di Seluruh Tombol */
+.dynamic-island-cc-tile-circle {
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    min-height: 36px;
+    max-width: 36px;
+    max-height: 36px;
+    border-radius: 999px;
+    background-color: rgba(255, 255, 255, 0.12);
+    color: #8e8e93;
+    padding: 0;
+    margin-right: 10px;
+    border: none;
+    transition: all 160ms ease;
+}
+
+.dynamic-island-cc-tile-circle:hover {
+    background-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Status Aktif: Biru Resmi Apple (#007aff) */
+.dynamic-island-cc-tile-circle.active {
+    background-color: #007aff !important;
+    color: #ffffff !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+/* Wadah Teks */
+.dynamic-island-cc-tile-textbox {
+    spacing: 2px;
+}
+
+/* Label Teks di dalam Ubin */
+.dynamic-island-cc-tile-title {
+    color: #ffffff;
+    font-size: 0.86em;
+    font-weight: 700;
+}
+
+.dynamic-island-cc-tile-sub {
+    color: #8e8e93;
+    font-size: 0.72em;
+    font-weight: 500;
+}
+
+/* Tombol Panah Buka Daftar Wi-Fi */
+.dynamic-island-cc-tile-chevron {
+    color: #8e8e93;
+    padding: 4px;
+    border-radius: 999px;
+    margin-left: 4px;
+    transition: all 150ms ease;
+}
+
+.dynamic-island-cc-tile-chevron:hover {
+    color: #ffffff;
+    background-color: rgba(255, 255, 255, 0.18);
 }
