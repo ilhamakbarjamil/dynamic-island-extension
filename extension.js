@@ -603,7 +603,7 @@ export default class DynamicIslandExtension extends Extension {
         });
         this._recordSubLabel = new St.Label({
             style_class: 'dynamic-island-record-sub-label',
-            text: 'SCREEN RECORDING',
+            text: 'RECORDING',
             y_align: Clutter.ActorAlign.CENTER,
         });
         this._recordSubLabelRow.add_child(this._recordExpandedDot);
@@ -651,7 +651,7 @@ export default class DynamicIslandExtension extends Extension {
         });
         this._ccTitle = new St.Label({
             style_class: 'dynamic-island-cc-title',
-            text: 'CONTROL CENTER',
+            text: '',
             x_expand: true,
             y_align: Clutter.ActorAlign.CENTER,
         });
