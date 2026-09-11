@@ -14,7 +14,7 @@ import { ControlCenterManager } from './controlCenter.js';
 
 export default class DynamicIslandExtension extends Extension {
     enable() {
-        console.log('[DynamicIsland] Mengaktifkan Dynamic Island (Grid Simetris Presisi)...');
+        console.log('[DynamicIsland] Mengaktifkan Dynamic Island (Klik Kanan Control Center & Smart Pause)...');
 
         this._settings = new Gio.Settings({ schema_id: 'org.gnome.desktop.notifications' });
         this._originalShowBanners = this._settings.get_boolean('show-banners');
@@ -41,11 +41,8 @@ export default class DynamicIslandExtension extends Extension {
         this._timerExpandedHeight = 135;
         this._timerPresetHeight   = 106;
         this._recordExpandedHeight= 96;
-        // Lebar saat hitung mundur 3-2-1: disamakan dengan idleWidth agar
-        // tetap menutup penuh area jam asli + ikon DND di panel GNOME,
-        // sebelumnya cuma 85px sehingga jam & ikon DND asli mengintip di sisi.
         this._countdownWidth      = this._idleWidth;
-        this._ccExpandedHeight    = 295; // Dihitung presisi: 16px pad + 34px header + 12px gap + (3 x 54px ubin) + (2 x 10px gap) + 20px pad bawah + buffer DPI = 295px
+        this._ccExpandedHeight    = 295;
 
         // ======== STATE ========
         this._isExpanded = false;
@@ -69,6 +66,7 @@ export default class DynamicIslandExtension extends Extension {
         this._recordPulseId = null;
         this._currentMedia = null;
         this._mediaActive = false;
+        this._pauseTimeoutId = null;
         this._isDraggingSeek = false;
         this._coverCache = new Map();
 
@@ -146,7 +144,7 @@ export default class DynamicIslandExtension extends Extension {
         this._idleBox.add_child(this._privacyBox);
         this._island.add_child(this._idleBox);
 
-        // ================= COUNTDOWN 3-2-1 SCREEN RECORDING =================
+        // ================= COUNTDOWN SCREEN RECORDING =================
         this._countdownBox = new St.Bin({
             style_class: 'dynamic-island-countdown-box',
             x_expand: true,
@@ -191,7 +189,7 @@ export default class DynamicIslandExtension extends Extension {
         this._compactRecordBox.add_child(this._compactRecordLabel);
         this._island.add_child(this._compactRecordBox);
 
-        // ================= BLUETOOTH / AIRPODS VIEW =================
+        // ================= BLUETOOTH VIEW =================
         this._bluetoothBox = new St.BoxLayout({
             style_class: 'dynamic-island-bt-box',
             vertical: false,
@@ -214,7 +212,7 @@ export default class DynamicIslandExtension extends Extension {
         });
         this._btNameLabel = new St.Label({
             style_class: 'dynamic-island-bt-name',
-            text: 'AirPods Pro',
+            text: 'Bluetooth Device',
             y_align: Clutter.ActorAlign.CENTER,
             x_expand: true,
         });
@@ -591,7 +589,6 @@ export default class DynamicIslandExtension extends Extension {
             y_align: Clutter.ActorAlign.CENTER,
         });
 
-        // Baris label: titik merah kecil + "SCREEN RECORDING" (merah, khas iOS)
         this._recordSubLabelRow = new St.BoxLayout({
             style_class: 'dynamic-island-record-sub-label-row',
             vertical: false,
@@ -631,7 +628,7 @@ export default class DynamicIslandExtension extends Extension {
         this._recordExpandedBox.add_child(this._recordStopBtn);
         this._island.add_child(this._recordExpandedBox);
 
-        // ================= 9. PURE APPLE CONTROL CENTER (GRID SIMETRIS) =================
+        // ================= CONTROL CENTER (GRID SIMETRIS) =================
         this._controlCenterBox = new St.BoxLayout({
             style_class: 'dynamic-island-cc-box',
             vertical: true,
@@ -642,7 +639,7 @@ export default class DynamicIslandExtension extends Extension {
             reactive: true,
         });
 
-        // Header
+        // Header Control Center
         this._ccHeaderRow = new St.BoxLayout({
             style_class: 'dynamic-island-cc-header',
             vertical: false,
@@ -691,7 +688,6 @@ export default class DynamicIslandExtension extends Extension {
         this._ccHeaderRow.add_child(this._ccActionsRow);
         this._controlCenterBox.add_child(this._ccHeaderRow);
 
-        // Native Clutter GridLayout
         this._ccGridLayout = new Clutter.GridLayout({
             column_spacing: 10,
             row_spacing: 10,
@@ -715,7 +711,6 @@ export default class DynamicIslandExtension extends Extension {
             hasChevron: true,
             onCircleClick: () => {
                 this._cc.toggleWifi();
-                // Beri jeda 350ms agar NetworkManager selesai mengubah status radio
                 GLib.timeout_add(GLib.PRIORITY_DEFAULT, 350, () => {
                     this._syncControlCenterUI();
                     return GLib.SOURCE_REMOVE;
@@ -750,7 +745,6 @@ export default class DynamicIslandExtension extends Extension {
             defaultSub: 'Off',
             onCircleClick: () => {
                 this._cc.toggleAirplaneMode();
-                // Beri jeda 350ms agar rfkill selesai mematikan/menyalakan semua radio
                 GLib.timeout_add(GLib.PRIORITY_DEFAULT, 350, () => {
                     this._syncControlCenterUI();
                     return GLib.SOURCE_REMOVE;
@@ -810,10 +804,9 @@ export default class DynamicIslandExtension extends Extension {
         Main.uiGroup.add_child(this._island);
         this._reposition(this._idleWidth);
 
-        // Manager Control Center
         this._cc = new ControlCenterManager(() => this._syncControlCenterUI());
 
-        // System Action Clicks
+        // Aksi Tombol Header Control Center
         this._btnScreenshot.connect('clicked', () => {
             this._collapse();
             this._cc.openScreenshot();
@@ -838,7 +831,7 @@ export default class DynamicIslandExtension extends Extension {
             return GLib.SOURCE_CONTINUE;
         });
 
-        // Screen Recording Watcher
+        // Watcher Screen Recording
         this._recorder = new ScreenRecordWatcher({
             onRecordingStarted: () => this._onRecordingStarted(),
             onRecordingStopped: () => this._onRecordingStopped(),
@@ -846,7 +839,7 @@ export default class DynamicIslandExtension extends Extension {
         });
         this._recordStopBtn.connect('clicked', () => this._recorder.stopRecordingSession());
 
-        // Seekbar Media Event
+        // Progress Track Seekbar
         this._progressTrack.connect('button-press-event', (_a, event) => {
             if (!this._currentMedia?.canSeek) return Clutter.EVENT_STOP;
             this._isDraggingSeek = true;
@@ -882,6 +875,20 @@ export default class DynamicIslandExtension extends Extension {
             this._origOsdShow(monitorIndex, icon, label, level, maxLevel);
         };
 
+        // ================= KLIK KANAN: BUKA CONTROL CENTER KAPAN SAJA =================
+        this._island.connect('button-press-event', (_actor, event) => {
+            const button = event.get_button();
+            if (button === 3) { // 3 = Tombol Klik Kanan Mouse
+                if (this._isControlCenterOpen) {
+                    this._collapse();
+                } else {
+                    this._expandControlCenter();
+                }
+                return Clutter.EVENT_STOP;
+            }
+            return Clutter.EVENT_PROPAGATE;
+        });
+
         // Hover Handler
         this._island.connect('notify::hover', () => {
             if (this._isChargingBannerActive || this._isHudActive || this._isBtBannerActive || this._isCountingDown) return;
@@ -892,6 +899,9 @@ export default class DynamicIslandExtension extends Extension {
                     GLib.source_remove(this._unhoverTimeoutId);
                     this._unhoverTimeoutId = null;
                 }
+                // Jika sedang membuka Control Center via Klik Kanan, jangan ditimpa
+                if (this._isControlCenterOpen) return;
+
                 if (!this._isExpanded && !this._isProcessingQueue) {
                     if (this._recorder?.isRecording) {
                         this._expandRecord();
@@ -921,7 +931,7 @@ export default class DynamicIslandExtension extends Extension {
         this._playBtn.connect('clicked', () => this._media?.togglePlayPause());
         this._nextBtn.connect('clicked', () => this._media?.next());
 
-        // Notifications
+        // Notifikasi GNOME
         this._sourceConnections = new Map();
         Main.messageTray.getSources().forEach(s => this._connectSource(s));
         this._sourceAddedId = Main.messageTray.connect('source-added', (_t, s) => this._connectSource(s));
@@ -933,7 +943,7 @@ export default class DynamicIslandExtension extends Extension {
         this._bluetooth = new BluetoothWatcher(event => this._onBluetoothConnected(event));
         this._privacy = new PrivacyWatcher(state => this._onPrivacyState(state));
 
-        // Wave Animation
+        // Animasi Gelombang Suara (Wave)
         this._wavePhase = 0;
         this._waveTickId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 170, () => {
             const playing = this._currentMedia?.status === 'Playing';
@@ -962,7 +972,7 @@ export default class DynamicIslandExtension extends Extension {
             return GLib.SOURCE_CONTINUE;
         });
 
-        // Progress Bar Media
+        // Progress Bar Media Tick
         this._progressTickId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1000, () => {
             if (this._mediaActive && this._currentMedia?.status === 'Playing' && this._isExpanded && !this._isDraggingSeek) {
                 this._updateProgressUI();
@@ -971,7 +981,7 @@ export default class DynamicIslandExtension extends Extension {
         });
     }
 
-    // ================= PABRIK PEMBUAT UBIN 100% HOMOGEN & SIMETRIS =================
+    // ================= PABRIK UBIN KONTROL =================
     _createUnifiedTile({ id, iconName, title, defaultSub, hasChevron, onCircleClick, onChevronClick }) {
         const tile = new St.BoxLayout({
             style_class: 'dynamic-island-cc-tile',
@@ -997,10 +1007,9 @@ export default class DynamicIslandExtension extends Extension {
             x_expand: true,
             y_align: Clutter.ActorAlign.CENTER,
             style_class: 'dynamic-island-cc-tile-textbox',
-            reactive: true, // Membuat area teks bisa menerima klik
+            reactive: true,
         });
 
-        // Klik pada area teks/nama tombol juga ikut menyalakan/mematikan
         if (onCircleClick) {
             textBox.connect('button-press-event', () => {
                 onCircleClick();
@@ -1047,7 +1056,7 @@ export default class DynamicIslandExtension extends Extension {
 
     // ================= CONTROL CENTER CONTROLLER =================
     _expandControlCenter() {
-        if (this._isExpanded || !this._island) return;
+        if (!this._island) return;
         this._isExpanded = true;
         this._isControlCenterOpen = true;
 
@@ -1055,13 +1064,14 @@ export default class DynamicIslandExtension extends Extension {
         this._compactBox.visible = false;
         this._compactRecordBox.visible = false;
         this._mediaContent.visible = false;
+        this._mediaContent.opacity = 0;
         this._recordExpandedBox.visible = false;
+        this._recordExpandedBox.opacity = 0;
         this._notifBox.visible = false;
         this._controlCenterBox.visible = true;
 
         this._syncControlCenterUI();
 
-        // Hitung tinggi riil secara otomatis via Clutter layout manager
         const [, naturalHeight] = this._controlCenterBox.get_preferred_height(this._mediaExpandedWidth);
         const targetHeight = (naturalHeight && naturalHeight > 200)
             ? Math.max(this._ccExpandedHeight, naturalHeight + 6)
@@ -1079,37 +1089,37 @@ export default class DynamicIslandExtension extends Extension {
     _syncControlCenterUI() {
         if (!this._cc) return;
 
-        // Sync Dark Mode
+        // Dark Mode
         const isDark = this._cc.isDarkMode();
         if (isDark) this._tileDataDark.circleBtn.add_style_class_name('active');
         else this._tileDataDark.circleBtn.remove_style_class_name('active');
         this._tileDataDark.subLabel.set_text(isDark ? 'On' : 'Off');
 
-        // Sync Night Light
+        // Night Light
         const isNight = this._cc.isNightLight();
         if (isNight) this._tileDataNight.circleBtn.add_style_class_name('active');
         else this._tileDataNight.circleBtn.remove_style_class_name('active');
         this._tileDataNight.subLabel.set_text(isNight ? 'On' : 'Off');
 
-        // Sync Wi-Fi
+        // Wi-Fi
         const isWifi = this._cc.isWifiEnabled();
         if (isWifi) this._tileDataWifi.circleBtn.add_style_class_name('active');
         else this._tileDataWifi.circleBtn.remove_style_class_name('active');
         this._tileDataWifi.subLabel.set_text(isWifi ? this._cc.getWifiSsid() : 'Off');
 
-        // Sync Bluetooth
+        // Bluetooth
         const isBt = this._cc.isBluetoothEnabled();
         if (isBt) this._tileDataBt.circleBtn.add_style_class_name('active');
         else this._tileDataBt.circleBtn.remove_style_class_name('active');
         this._tileDataBt.subLabel.set_text(isBt ? 'On' : 'Off');
 
-        // Sync Airplane
+        // Airplane Mode
         const isAirplane = this._cc.isAirplaneMode();
         if (isAirplane) this._tileDataAirplane.circleBtn.add_style_class_name('active');
         else this._tileDataAirplane.circleBtn.remove_style_class_name('active');
         this._tileDataAirplane.subLabel.set_text(isAirplane ? 'On' : 'Off');
 
-        // Sync Power
+        // Power Mode
         const pMode = this._cc.getPowerProfile();
         if (pMode === 'Performance' || pMode === 'Power Saver') {
             this._tileDataPower.circleBtn.add_style_class_name('active');
@@ -1122,7 +1132,7 @@ export default class DynamicIslandExtension extends Extension {
         this._tileDataPower.subLabel.set_text(subText);
     }
 
-    // ================= RECORDING =================
+    // ================= SCREEN RECORDING =================
     _onRecordingStarted() {
         this._isCountingDown = true;
         this._countdownNumber = 3;
@@ -1172,8 +1182,6 @@ export default class DynamicIslandExtension extends Extension {
         this._collapse();
     }
 
-    // Titik merah "berdenyut" khas indikator recording iOS, dipakai baik
-    // di mode compact maupun expanded, dinyalakan/dimatikan bersamaan.
     _startRecordPulse() {
         this._stopRecordPulse();
         let dim = false;
@@ -1425,6 +1433,12 @@ export default class DynamicIslandExtension extends Extension {
             opacity: 0,
             duration: 80,
             mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+        });
+
+        this._controlCenterBox.ease({
+            opacity: 0,
+            duration: 80,
+            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
             onComplete: () => {
                 this._mediaContent.visible = false;
                 this._notifBox.visible = false;
@@ -1485,8 +1499,15 @@ export default class DynamicIslandExtension extends Extension {
         });
     }
 
+    // ================= MPRIS UPDATE DENGAN TIMER PAUSE =================
     _onMediaUpdate(state) {
         this._currentMedia = state;
+
+        // Reset timer jeda pause setiap ada perubahan data
+        if (this._pauseTimeoutId) {
+            GLib.source_remove(this._pauseTimeoutId);
+            this._pauseTimeoutId = null;
+        }
 
         if (!state || state.status === 'Stopped') {
             this._mediaActive = false;
@@ -1505,8 +1526,35 @@ export default class DynamicIslandExtension extends Extension {
             return;
         }
 
-        this._mediaActive = true;
-        this._idleBox.visible = false;
+        // Penanganan Status: Playing vs Paused
+        if (state.status === 'Playing') {
+            this._mediaActive = true;
+        } else if (state.status === 'Paused') {
+            // Berikan jeda 8 detik sebelum benar-benar kembali ke jam digital
+            if (this._mediaActive) {
+                this._pauseTimeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 8, () => {
+                    this._pauseTimeoutId = null;
+                    this._mediaActive = false; // Izinkan Control Center terbuka kembali lewat hover
+
+                    if (!this._isExpanded && !this._recorder?.isRecording && !this._isChargingBannerActive && !this._isHudActive && !this._isBtBannerActive) {
+                        this._compactBox.ease({
+                            opacity: 0,
+                            duration: 140,
+                            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                            onComplete: () => {
+                                this._compactBox.visible = false;
+                                this._idleBox.visible = true;
+                                this._idleBox.opacity = 0;
+                                this._idleBox.ease({ opacity: 255, duration: 160, mode: Clutter.AnimationMode.EASE_OUT_QUAD });
+                            },
+                        });
+                        this._repositionAndResize(this._idleWidth, this._collapsedHeight, 260, Clutter.AnimationMode.EASE_OUT_QUAD);
+                    }
+                    return GLib.SOURCE_REMOVE;
+                });
+            }
+        }
+
         this._titleLabel.set_text(state.title || 'Sedang Diputar');
         this._bodyLabel.set_text(state.artist || 'Tidak Diketahui');
         this._loadCoverArt(state.artUrl);
@@ -1516,9 +1564,14 @@ export default class DynamicIslandExtension extends Extension {
             : 'media-playback-start-symbolic';
         this._playBtn.child.icon_name = playIcon;
 
-        if (!this._isExpanded && !this._isProcessingQueue && !this._isChargingBannerActive && !this._isHudActive && !this._isBtBannerActive && !this._recorder?.isRecording && !this._isControlCenterOpen) {
-            this._compactBox.visible = true;
-            this._repositionAndResize(this._compactMediaWidth, this._collapsedHeight, 240, Clutter.AnimationMode.EASE_OUT_QUAD);
+        // Tampilkan compact media jika musik aktif dan tidak sedang mode expanded lain
+        if (this._mediaActive) {
+            this._idleBox.visible = false;
+            if (!this._isExpanded && !this._isProcessingQueue && !this._isChargingBannerActive && !this._isHudActive && !this._isBtBannerActive && !this._recorder?.isRecording && !this._isControlCenterOpen) {
+                this._compactBox.visible = true;
+                this._compactBox.opacity = 255;
+                this._repositionAndResize(this._compactMediaWidth, this._collapsedHeight, 240, Clutter.AnimationMode.EASE_OUT_QUAD);
+            }
         }
 
         if (this._isExpanded) {
@@ -1719,6 +1772,10 @@ export default class DynamicIslandExtension extends Extension {
     }
 
     disable() {
+        if (this._pauseTimeoutId) {
+            GLib.source_remove(this._pauseTimeoutId);
+            this._pauseTimeoutId = null;
+        }
         if (this._clockTickId) {
             GLib.source_remove(this._clockTickId);
             this._clockTickId = null;
