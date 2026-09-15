@@ -723,3 +723,38 @@
     background-color: #0a84ff !important;
     color: #ffffff !important;
 }
+
+/* ================= 13. WORKSPACE SWITCHER (IOS STYLE) ================= */
+.dynamic-island-ws-box {
+    padding: 0 14px;
+    spacing: 8px;
+}
+
+.dynamic-island-ws-icon {
+    color: #0a84ff; /* Apple System Blue */
+}
+
+.dynamic-island-ws-label {
+    color: #ffffff;
+    font-size: 0.86em;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+}
+
+.dynamic-island-ws-dots-box {
+    spacing: 4px;
+}
+
+.dynamic-island-ws-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 999px;
+    background-color: rgba(255, 255, 255, 0.28);
+}
+
+.dynamic-island-ws-dot-active {
+    width: 14px;
+    height: 5px;
+    border-radius: 999px;
+    background-color: #ffffff;
+}

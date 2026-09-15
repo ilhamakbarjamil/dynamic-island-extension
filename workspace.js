@@ -3,43 +3,48 @@ import GLib from 'gi://GLib';
 export class WorkspaceWatcher {
     constructor(onChange) {
         this._onChange = onChange;
+        this._wsManager = global.workspace_manager || global.workspaceManager || null;
         this._workspaceChangedId = null;
-        this._startupId = null;
-        this._display = global.display || null;
+        this._lastIndex = this._getActiveIndex();
 
-        this._notifyCurrentWorkspace();
         this._install();
     }
 
-    _install() {
-        if (!this._display) return;
-
+    _getActiveIndex() {
         try {
-            this._workspaceChangedId = this._display.connect(
-                'workspace-switched',
-                () => this._notifyCurrentWorkspace()
-            );
+            return this._wsManager?.get_active_workspace()?.index() ?? 0;
         } catch (_) {
-            this._workspaceChangedId = null;
+            return 0;
         }
+    }
+
+    _install() {
+        if (!this._wsManager) return;
 
         try {
-            this._startupId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1000, () => {
-                this._notifyCurrentWorkspace();
-                return GLib.SOURCE_REMOVE;
-            });
-        } catch (_) {
-            this._startupId = null;
+            // Sinyal resmi GNOME Shell untuk pergantian workspace aktif
+            this._workspaceChangedId = this._wsManager.connect(
+                'active-workspace-changed',
+                () => {
+                    const newIndex = this._getActiveIndex();
+                    // Hanya picu jika user benar-benar berpindah workspace
+                    if (newIndex !== this._lastIndex) {
+                        this._lastIndex = newIndex;
+                        this._notifyCurrentWorkspace();
+                    }
+                }
+            );
+        } catch (e) {
+            console.log('[DynamicIsland] Gagal connect active-workspace-changed:', e.message);
+            this._workspaceChangedId = null;
         }
     }
 
     _notifyCurrentWorkspace() {
-        if (!this._onChange) return;
+        if (!this._onChange || !this._wsManager) return;
 
-        const workspaceManager = global.workspace_manager;
-        const activeWorkspace = workspaceManager?.get_active_workspace?.();
-        const index = (activeWorkspace?.index?.() ?? 0) + 1;
-        const totalWorkspaces = workspaceManager?.n_workspaces ?? 4;
+        const index = this._getActiveIndex() + 1; // 1-based index
+        const totalWorkspaces = this._wsManager.get_n_workspaces?.() ?? 4;
         const name = `Desk ${index}`;
 
         this._onChange({
@@ -50,21 +55,14 @@ export class WorkspaceWatcher {
     }
 
     destroy() {
-        if (this._workspaceChangedId && this._display) {
+        if (this._workspaceChangedId && this._wsManager) {
             try {
-                this._display.disconnect(this._workspaceChangedId);
+                this._wsManager.disconnect(this._workspaceChangedId);
             } catch (_) {}
             this._workspaceChangedId = null;
         }
 
-        if (this._startupId) {
-            try {
-                GLib.source_remove(this._startupId);
-            } catch (_) {}
-            this._startupId = null;
-        }
-
         this._onChange = null;
-        this._display = null;
+        this._wsManager = null;
     }
 }

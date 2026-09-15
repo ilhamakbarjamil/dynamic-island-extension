@@ -285,16 +285,75 @@ export default class DynamicIslandExtension extends Extension {
     }
 
     _initWorkspaceView() {
-        this._wsBox = new St.BoxLayout({ style_class: 'dynamic-island-ws-box', vertical: false, x_expand: true, y_expand: true, y_align: Clutter.ActorAlign.CENTER });
-        this._wsIcon = new St.Icon({ icon_name: 'view-grid-symbolic', icon_size: 13, style_class: 'dynamic-island-ws-icon' });
-        this._wsDotsBox = new St.BoxLayout({ style_class: 'dynamic-island-ws-dots-box', vertical: false, y_align: Clutter.ActorAlign.CENTER });
-        this._wsLabel = new St.Label({ style_class: 'dynamic-island-ws-label', text: 'Desk 1', y_align: Clutter.ActorAlign.CENTER });
+        this._wsBox = new St.BoxLayout({
+            style_class: 'dynamic-island-ws-box',
+            vertical: false,
+            x_expand: true,
+            y_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        // Icon grid bernuansa Apple System Blue
+        this._wsIcon = new St.Icon({
+            icon_name: 'view-grid-symbolic',
+            icon_size: 14,
+            style_class: 'dynamic-island-ws-icon',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        // Label teks Workspace
+        this._wsLabel = new St.Label({
+            style_class: 'dynamic-island-ws-label',
+            text: 'Desk 1',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        // Container Dots Pagination di sisi kanan ala iOS
+        this._wsDotsBox = new St.BoxLayout({
+            style_class: 'dynamic-island-ws-dots-box',
+            vertical: false,
+            x_align: Clutter.ActorAlign.END,
+            y_align: Clutter.ActorAlign.CENTER,
+            x_expand: true,
+        });
 
         this._wsBox.add_child(this._wsIcon);
-        this._wsBox.add_child(this._wsDotsBox);
         this._wsBox.add_child(this._wsLabel);
+        this._wsBox.add_child(this._wsDotsBox);
+
         this._island.add_child(this._wsBox);
         this._allViews.set(VIEW_WORKSPACE, this._wsBox);
+    }
+
+    _onWorkspaceChanged({ index, totalWorkspaces, name }) {
+        if (this._isControlCenterOpen || this._isExpanded) return;
+        if (this._bannerDismissId) GLib.source_remove(this._bannerDismissId);
+
+        this._wsDotsBox.destroy_all_children();
+        const total = Math.min(6, Math.max(2, totalWorkspaces || 4));
+
+        // Buat dot pagination ala iOS (Aktif = Kapsul lonjong lebar 14px, Inaktif = Bulat 5px)
+        for (let i = 1; i <= total; i++) {
+            const isCurrent = (i === index);
+            const dot = new St.Widget({
+                style_class: isCurrent ? 'dynamic-island-ws-dot-active' : 'dynamic-island-ws-dot',
+                width: isCurrent ? 14 : 5,
+                height: 5,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            this._wsDotsBox.add_child(dot);
+        }
+        this._wsLabel.set_text(name);
+
+        this._setView(VIEW_WORKSPACE);
+        this._repositionAndResize(this._wsWidth, this._collapsedHeight, 320, Clutter.AnimationMode.EASE_OUT_CUBIC);
+
+        // Tampilkan selama 1.3 detik lalu kembali otomatis (responsif ala iOS HUD)
+        this._bannerDismissId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1300, () => {
+            this._bannerDismissId = null;
+            this._restoreBestView();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     _initCompactDownloadView() {
@@ -884,32 +943,6 @@ export default class DynamicIslandExtension extends Extension {
         this._countdownBox.set_child(this._countdownLabel);
         this._island.add_child(this._countdownBox);
         this._allViews.set(VIEW_COUNTDOWN, this._countdownBox);
-    }
-
-    _onWorkspaceChanged({ index, totalWorkspaces, name }) {
-        if (this._isControlCenterOpen || this._isExpanded) return;
-        if (this._bannerDismissId) GLib.source_remove(this._bannerDismissId);
-
-        this._wsDotsBox.destroy_all_children();
-        const total = Math.min(6, Math.max(2, totalWorkspaces || 4));
-        for (let i = 1; i <= total; i++) {
-            const isCurrent = (i === index);
-            const dot = new St.Widget({
-                style_class: isCurrent ? 'dynamic-island-ws-dot-active' : 'dynamic-island-ws-dot',
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-            this._wsDotsBox.add_child(dot);
-        }
-        this._wsLabel.set_text(name);
-
-        this._setView(VIEW_WORKSPACE);
-        this._repositionAndResize(this._wsWidth, this._collapsedHeight, 320, Clutter.AnimationMode.EASE_OUT_CUBIC);
-
-        this._bannerDismissId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1300, () => {
-            this._bannerDismissId = null;
-            this._restoreBestView();
-            return GLib.SOURCE_REMOVE;
-        });
     }
 
     _onDriveMounted(data) {
