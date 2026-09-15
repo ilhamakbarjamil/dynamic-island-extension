@@ -868,13 +868,86 @@ export default class DynamicIslandExtension extends Extension {
     }
 
     _initVpnView() {
-        this._vpnBox = new St.BoxLayout({ style_class: 'dynamic-island-vpn-box', vertical: false, x_expand: true, y_expand: true, y_align: Clutter.ActorAlign.CENTER });
-        this._vpnIcon = new St.Icon({ icon_name: 'channel-secure-symbolic', icon_size: 14 });
-        this._vpnLabel = new St.Label({ style_class: 'dynamic-island-vpn-label', text: 'WARP', y_align: Clutter.ActorAlign.CENTER });
-        this._vpnBox.add_child(this._vpnIcon);
-        this._vpnBox.add_child(this._vpnLabel);
+        this._vpnBox = new St.BoxLayout({
+            style_class: 'dynamic-island-vpn-box',
+            vertical: false,
+            x_expand: true,
+            y_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        this._vpnIcon = new St.Icon({
+            icon_name: 'channel-secure-symbolic',
+            icon_size: 13,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        this._vpnIconBin = new St.Bin({
+            style_class: 'dynamic-island-vpn-icon-bin connected',
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.CENTER,
+            child: this._vpnIcon,
+        });
+
+        this._vpnNameLabel = new St.Label({
+            style_class: 'dynamic-island-vpn-name',
+            text: 'WARP',
+            y_align: Clutter.ActorAlign.CENTER,
+            x_expand: true,
+        });
+        this._vpnNameLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+
+        this._vpnStatusLabel = new St.Label({
+            style_class: 'dynamic-island-vpn-status connected',
+            text: 'Connected',
+            y_align: Clutter.ActorAlign.CENTER,
+            x_align: Clutter.ActorAlign.END,
+        });
+
+        this._vpnBox.add_child(this._vpnIconBin);
+        this._vpnBox.add_child(this._vpnNameLabel);
+        this._vpnBox.add_child(this._vpnStatusLabel);
+
         this._island.add_child(this._vpnBox);
         this._allViews.set(VIEW_VPN, this._vpnBox);
+    }
+
+    _onVpnChanged({ name, isConnected }) {
+        if (this._isControlCenterOpen) return;
+        if (this._bannerDismissId) {
+            GLib.source_remove(this._bannerDismissId);
+            this._bannerDismissId = null;
+        }
+
+        const displayName = name || 'WARP';
+        if (this._vpnNameLabel) {
+            this._vpnNameLabel.set_text(displayName);
+        }
+
+        if (isConnected) {
+            if (this._vpnIcon) this._vpnIcon.icon_name = 'channel-secure-symbolic';
+            if (this._vpnIconBin) this._vpnIconBin.style_class = 'dynamic-island-vpn-icon-bin connected';
+            if (this._vpnStatusLabel) {
+                this._vpnStatusLabel.set_text('Connected');
+                this._vpnStatusLabel.style_class = 'dynamic-island-vpn-status connected';
+            }
+        } else {
+            if (this._vpnIcon) this._vpnIcon.icon_name = 'channel-insecure-symbolic';
+            if (this._vpnIconBin) this._vpnIconBin.style_class = 'dynamic-island-vpn-icon-bin disconnected';
+            if (this._vpnStatusLabel) {
+                this._vpnStatusLabel.set_text('Disconnected');
+                this._vpnStatusLabel.style_class = 'dynamic-island-vpn-status disconnected';
+            }
+        }
+
+        this._setView(VIEW_VPN);
+        this._repositionAndResize(this._vpnWidth, this._collapsedHeight, 320, Clutter.AnimationMode.EASE_OUT_CUBIC);
+
+        this._bannerDismissId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2600, () => {
+            this._bannerDismissId = null;
+            this._restoreBestView();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     _initBluetoothView() {
@@ -973,24 +1046,6 @@ export default class DynamicIslandExtension extends Extension {
         this._repositionAndResize(this._mountWidth, this._collapsedHeight, 320, Clutter.AnimationMode.EASE_OUT_CUBIC);
 
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1800, () => {
-            this._restoreBestView();
-            return GLib.SOURCE_REMOVE;
-        });
-    }
-
-    _onVpnChanged({ name, isConnected, isWarp }) {
-        if (this._isControlCenterOpen) return;
-        if (this._bannerDismissId) GLib.source_remove(this._bannerDismissId);
-
-        this._vpnLabel.set_text(`${name} ${isConnected ? 'Connected' : 'Disconnected'}`);
-        this._vpnIcon.icon_name = isConnected ? 'channel-secure-symbolic' : 'channel-insecure-symbolic';
-        this._vpnIcon.style_class = isConnected ? 'dynamic-island-vpn-on' : 'dynamic-island-vpn-off';
-
-        this._setView(VIEW_VPN);
-        this._repositionAndResize(this._vpnWidth, this._collapsedHeight, 320, Clutter.AnimationMode.EASE_OUT_CUBIC);
-
-        this._bannerDismissId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2600, () => {
-            this._bannerDismissId = null;
             this._restoreBestView();
             return GLib.SOURCE_REMOVE;
         });

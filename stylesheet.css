@@ -758,3 +758,48 @@
     border-radius: 999px;
     background-color: #ffffff;
 }
+
+/* ================= 14. VPN / CLOUDFLARE WARP (IPHONE DYNAMIC ISLAND STYLE) ================= */
+.dynamic-island-vpn-box {
+    padding: 0 14px;
+    spacing: 10px;
+}
+
+.dynamic-island-vpn-icon-bin {
+    width: 22px;
+    height: 22px;
+    border-radius: 999px;
+    background-color: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+}
+
+.dynamic-island-vpn-icon-bin.connected {
+    background-color: rgba(48, 209, 88, 0.20);
+    color: #30d158;
+}
+
+.dynamic-island-vpn-icon-bin.disconnected {
+    background-color: rgba(255, 69, 58, 0.20);
+    color: #ff453a;
+}
+
+.dynamic-island-vpn-name {
+    color: #ffffff;
+    font-size: 0.86em;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+}
+
+.dynamic-island-vpn-status {
+    font-size: 0.82em;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+}
+
+.dynamic-island-vpn-status.connected {
+    color: #30d158; /* Apple Green */
+}
+
+.dynamic-island-vpn-status.disconnected {
+    color: #ff453a; /* Apple Red */
+}
