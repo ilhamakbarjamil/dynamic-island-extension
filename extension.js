@@ -1373,6 +1373,67 @@ export default class DynamicIslandExtension extends Extension {
         this._ccMediaArt.icon_name = iconName || 'audio-x-generic-symbolic';
     }
 
+    _animateWaves() {
+        // Pola variasi tinggi gelombang dinamis layaknya visualizer iOS
+        const heightsCompact = [
+            Math.floor(Math.random() * 10) + 4,
+            Math.floor(Math.random() * 12) + 4,
+            Math.floor(Math.random() * 10) + 4,
+            Math.floor(Math.random() * 8)  + 4,
+        ];
+
+        const heightsExpanded = [
+            Math.floor(Math.random() * 12) + 4,
+            Math.floor(Math.random() * 16) + 5,
+            Math.floor(Math.random() * 14) + 4,
+            Math.floor(Math.random() * 10) + 4,
+        ];
+
+        // Animasikan bar di mode Compact (Pill kecil)
+        if (this._waveBars) {
+            this._waveBars.forEach((bar, i) => {
+                bar.ease({
+                    height: heightsCompact[i],
+                    duration: 130,
+                    mode: Clutter.AnimationMode.EASE_IN_OUT_QUAD,
+                });
+            });
+        }
+
+        // Animasikan bar di mode Expanded (Pop-up lebar kanan atas lagu)
+        if (this._headerWaveBars) {
+            this._headerWaveBars.forEach((bar, i) => {
+                bar.ease({
+                    height: heightsExpanded[i],
+                    duration: 130,
+                    mode: Clutter.AnimationMode.EASE_IN_OUT_QUAD,
+                });
+            });
+        }
+    }
+
+    _resetWaves() {
+        // Kembalikan semua bar ke tinggi minimal (flat) saat musik di-pause/stop
+        if (this._waveBars) {
+            this._waveBars.forEach(bar => {
+                bar.ease({
+                    height: 4,
+                    duration: 180,
+                    mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                });
+            });
+        }
+        if (this._headerWaveBars) {
+            this._headerWaveBars.forEach(bar => {
+                bar.ease({
+                    height: 4,
+                    duration: 180,
+                    mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                });
+            });
+        }
+    }
+
     _setupMouseEvents() {
         this._island.connect('button-press-event', (_actor, event) => {
             if (event.get_button() === 3) {
@@ -1454,17 +1515,21 @@ export default class DynamicIslandExtension extends Extension {
         this._clockTickId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
             this._updateClock();
             
-            // Jantung utama: Jika musik sedang aktif, paksa update progress bar
             if (this._mediaActive && this._currentMedia) {
                 this._updateMediaProgress();
             }
             return GLib.SOURCE_CONTINUE;
         });
 
-        // Ticker Animasi Wave (Berjalan cepat)
-        this._waveTickId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 160, () => {
+        // Ticker Animasi Wave (Berjalan setiap 150ms)
+        this._wavesAreReset = false;
+        this._waveTickId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 150, () => {
             if (this._mediaActive && this._currentMedia?.status === 'Playing') {
-                this._animateWaves(); // Jalankan bar goyang
+                this._wavesAreReset = false;
+                this._animateWaves(); // Jalankan bar goyang naik-turun
+            } else if (!this._wavesAreReset) {
+                this._wavesAreReset = true;
+                this._resetWaves();   // Kembalikan ke posisi datar saat jeda
             }
             return GLib.SOURCE_CONTINUE;
         });
