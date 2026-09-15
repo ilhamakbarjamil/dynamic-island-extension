@@ -605,23 +605,39 @@ export default class DynamicIslandExtension extends Extension {
     }
 
     _updateMediaProgress() {
-        if (!this._currentMedia || this._currentMedia.status === 'Stopped') return;
-        const duration = this._currentMedia.length || 0;
-        const pos = this._media?.getPosition() ?? 0;
+        if (!this._currentMedia || !this._mediaActive) return;
 
-        const durSecs = this._toSeconds(duration);
-        const posSecs = this._toSeconds(pos);
+        // Ambil durasi total (length) dan posisi saat ini (pos)
+        const duration = this._currentMedia.length || 0; // dalam mikrodetik
+        const pos = this._media?.getPosition() ?? 0;    // dalam mikrodetik
+
+        if (duration <= 0) return;
+
+        // Konversi ke detik untuk Label waktu
+        const durSecs = Math.floor(duration / 1000000);
+        const posSecs = Math.floor(pos / 1000000);
         const remSecs = Math.max(0, durSecs - posSecs);
 
+        // Update Label Waktu (0:00)
         if (this._timeLabel) this._timeLabel.set_text(this._formatTime(posSecs));
         if (this._durationLabel) {
             this._durationLabel.set_text(durSecs > 0 ? `-${this._formatTime(remSecs)}` : '0:00');
         }
 
-        if (durSecs > 0 && this._progressTrack) {
-            const ratio = Math.max(0, Math.min(1, posSecs / durSecs));
-            const trackW = this._progressTrack.width > 0 ? this._progressTrack.width : 320;
-            this._progressFill.width = Math.max(6, Math.floor(trackW * ratio));
+        // Update Panjang Progress Fill (Putih)
+        // Hitung rasio (0.0 sampai 1.0)
+        const ratio = Math.clamp(pos / duration, 0, 1);
+        
+        // Pastikan track bar memiliki lebar sebelum menghitung fill
+        const trackWidth = this._progressTrack.get_width() || 330; 
+        
+        // Update lebar secara real-time
+        this._progressFill.set_width(Math.max(6, Math.floor(trackWidth * ratio)));
+
+        // SINKRONISASI UNTUK CONTROL CENTER (Jika sedang dibuka)
+        if (this._isControlCenterOpen) {
+            const ccTrackWidth = this._ccScrubTrack.get_width() || 180;
+            this._ccScrubFill.set_width(Math.max(16, Math.floor(ccTrackWidth * ratio)));
         }
     }
 
@@ -1246,42 +1262,29 @@ export default class DynamicIslandExtension extends Extension {
     }
 
     _onMediaUpdate(state) {
-        this._currentMedia = state;
         if (!state || state.status === 'Stopped') {
             this._mediaActive = false;
-            if (this._currentView === VIEW_COMPACT_MEDIA || this._currentView === VIEW_EXPANDED_MEDIA) {
-                this._restoreBestView();
-            }
-            this._syncControlCenterUI();
+            this._restoreBestView();
             return;
         }
 
-        if (state.status === 'Playing') {
-            this._mediaActive = true;
-        } else if (state.status === 'Paused' && this._mediaActive) {
-            if (this._pauseTimeoutId) GLib.source_remove(this._pauseTimeoutId);
-            this._pauseTimeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 8, () => {
-                this._pauseTimeoutId = null;
-                this._mediaActive = false;
-                if (this._currentView === VIEW_COMPACT_MEDIA) this._restoreBestView();
-                return GLib.SOURCE_REMOVE;
-            });
-        }
+        this._currentMedia = state;
+        
+        // Tetap anggap aktif meskipun Paused agar Island tidak "mati" di tengah lagu
+        this._mediaActive = (state.status === 'Playing' || state.status === 'Paused');
 
-        this._titleLabel.set_text(state.title || 'Sedang Diputar');
-        this._bodyLabel.set_text(state.artist || 'Tidak Diketahui');
+        // Update UI...
+        this._titleLabel.set_text(state.title || 'Unknown');
+        this._bodyLabel.set_text(state.artist || 'Unknown Artist');
         this._loadCoverArt(state.artUrl);
 
-        const playIcon = state.status === 'Playing' ? 'media-playback-pause-symbolic' : 'media-playback-start-symbolic';
-        this._playBtn.child.icon_name = playIcon;
-
-        if (this._mediaActive && this._currentView === VIEW_IDLE) {
+        if (!this._isExpanded && !this._isControlCenterOpen) {
             this._setView(VIEW_COMPACT_MEDIA);
-            this._repositionAndResize(this._compactMediaWidth, this._collapsedHeight, 320, Clutter.AnimationMode.EASE_OUT_CUBIC);
+            this._repositionAndResize(this._compactMediaWidth, this._collapsedHeight);
         }
 
+        // Panggil update segera
         this._updateMediaProgress();
-        this._syncControlCenterUI();
     }
 
     _syncControlCenterUI() {
@@ -1459,28 +1462,22 @@ export default class DynamicIslandExtension extends Extension {
 
     _startClockAndWave() {
         this._updateClock();
+        
+        // Ticker Utama (Berjalan setiap 1 detik)
         this._clockTickId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
             this._updateClock();
-            if (this._isExpanded && this._currentView === VIEW_EXPANDED_MEDIA) {
+            
+            // Jantung utama: Jika musik sedang aktif, paksa update progress bar
+            if (this._mediaActive && this._currentMedia) {
                 this._updateMediaProgress();
             }
             return GLib.SOURCE_CONTINUE;
         });
 
-        this._wavePhase = 0;
+        // Ticker Animasi Wave (Berjalan cepat)
         this._waveTickId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 160, () => {
-            if (this._mediaActive && this._currentMedia?.status === 'Playing' && !this._isControlCenterOpen) {
-                const patterns = [6, 15, 20, 10, 18, 7];
-                this._wavePhase = (this._wavePhase + 1) % patterns.length;
-                if (!this._isExpanded) {
-                    this._waveBars.forEach((bar, i) => {
-                        bar.ease({ height: patterns[(this._wavePhase + i) % patterns.length], duration: 150, mode: Clutter.AnimationMode.EASE_IN_OUT_SINE });
-                    });
-                } else {
-                    this._headerWaveBars.forEach((bar, i) => {
-                        bar.ease({ height: patterns[(this._wavePhase + i) % patterns.length], duration: 150, mode: Clutter.AnimationMode.EASE_IN_OUT_SINE });
-                    });
-                }
+            if (this._mediaActive && this._currentMedia?.status === 'Playing') {
+                this._animateWaves(); // Jalankan bar goyang
             }
             return GLib.SOURCE_CONTINUE;
         });

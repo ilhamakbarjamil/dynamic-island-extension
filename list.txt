@@ -1,22 +1,6 @@
-3. ketika pesan whatsapp panjang atau banyak tampilannya tidak elegan
-        3.1 tampilan notifikasi media sosial kurang lebar
-4. notifikasi ketika di klik belum bisa langsung menuju lokasi
-
-fitur:
-1. Workspace Switcher
-2. USB / Drive Mount Alert
-3. Download Progress
-
-tampilan yang perlu di perbaiki lagi:
-1. vpn / cloudflare
-2. usb / drive mount alert
-3. notifikasi pesan media sosial kurang lebar
-4. loading download masih kurang konsisten
-
 fitur yang perlu di perbaiki:
 1. mpris ketika play di youtube dan spotify, misal saya buka youtube dulu kemudian spotify, yang ke baca itu yang di youtube, yang spotify ketika saya play itu tidak muncul di dynamic
-
+2. mpris mati di tengah tengah lagu, apakah memang begitu di iphone ?
 
 yang perlu di revisi:
-1. ok sekarang yang perlu di perbaiki adalah masih ada border kotak, ini harus kita hlangkan
 2. animasi dari mode normal ke expand itu tidak smooth, itu yang perlu di perbaiki
