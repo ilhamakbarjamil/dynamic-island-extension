@@ -803,3 +803,73 @@
 .dynamic-island-vpn-status.disconnected {
     color: #ff453a; /* Apple Red */
 }
+
+/* ================= 15. DOWNLOAD MONITOR (IPHONE DYNAMIC ISLAND STYLE) ================= */
+.dynamic-island-dl-box {
+    padding: 0 16px;
+    spacing: 12px;
+}
+
+.dynamic-island-dl-icon-bin {
+    width: 26px;
+    height: 26px;
+    border-radius: 999px;
+    background-color: rgba(10, 132, 255, 0.18);
+}
+
+.dynamic-island-dl-icon {
+    color: #0a84ff; /* Apple System Blue */
+}
+
+.dynamic-island-dl-text-col {
+    spacing: 1px;
+}
+
+.dynamic-island-dl-status {
+    color: #8e8e93;
+    font-size: 0.68em;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+}
+
+.dynamic-island-dl-name {
+    color: #ffffff;
+    font-size: 0.86em;
+    font-weight: 600;
+    max-width: 120px;
+}
+
+.dynamic-island-dl-progress-box {
+    spacing: 8px;
+}
+
+.dynamic-island-dl-track {
+    width: 54px;
+    height: 5px;
+    border-radius: 999px;
+    background-color: rgba(255, 255, 255, 0.18);
+}
+
+.dynamic-island-dl-fill {
+    height: 5px;
+    border-radius: 999px;
+    background-color: #0a84ff; /* Apple System Blue */
+}
+
+.dynamic-island-dl-percent {
+    color: #0a84ff;
+    font-size: 0.80em;
+    font-weight: 700;
+    min-width: 32px;
+}
+
+.dynamic-island-dl-complete-bin {
+    width: 24px;
+    height: 24px;
+    border-radius: 999px;
+    background-color: rgba(48, 209, 88, 0.20);
+}
+
+.dynamic-island-dl-checkmark {
+    color: #30d158; /* Apple System Green */
+}

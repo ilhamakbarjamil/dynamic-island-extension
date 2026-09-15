@@ -371,7 +371,7 @@ export default class DynamicIslandExtension extends Extension {
             y_align: Clutter.ActorAlign.CENTER,
             child: new St.Icon({
                 icon_name: 'folder-download-symbolic',
-                icon_size: 16,
+                icon_size: 15,
                 style_class: 'dynamic-island-dl-icon',
             }),
         });
@@ -384,7 +384,7 @@ export default class DynamicIslandExtension extends Extension {
         });
         this._dlStatusLabel = new St.Label({
             style_class: 'dynamic-island-dl-status',
-            text: 'Downloading',
+            text: 'DOWNLOADING',
             y_align: Clutter.ActorAlign.CENTER,
         });
         this._dlNameLabel = new St.Label({
