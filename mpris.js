@@ -5,14 +5,23 @@ const MPRIS_PREFIX = 'org.mpris.MediaPlayer2.';
 const MPRIS_PATH   = '/org/mpris/MediaPlayer2';
 const MPRIS_IFACE  = 'org.mpris.MediaPlayer2.Player';
 
+// Helper untuk membongkar GLib.Variant bertingkat secara aman
+function unwrap(val) {
+    if (val === null || val === undefined) return val;
+    if (typeof val.deep_unpack === 'function') return unwrap(val.deep_unpack());
+    if (typeof val.unpack === 'function') return unwrap(val.unpack());
+    return val;
+}
+
 export class MediaWatcher {
     constructor(onUpdate) {
         this._onUpdate = onUpdate;
         this._bus = Gio.DBus.session;
         this._players = new Map();
         this._activeBusName = null;
+        this._graceTimerId = null;
 
-        // Mendeteksi aplikasi musik yang baru dibuka atau ditutup
+        // Mendeteksi aplikasi pemutar musik/video yang dibuka atau ditutup
         this._ownerChangedId = this._bus.signal_subscribe(
             'org.freedesktop.DBus',
             'org.freedesktop.DBus',
@@ -23,7 +32,7 @@ export class MediaWatcher {
             (_c, _s, _p, _i, _sig, params) => {
                 const [name, oldOwner, newOwner] = params.deep_unpack();
                 if (!name.startsWith(MPRIS_PREFIX)) return;
-                
+
                 if (newOwner) {
                     this._addPlayer(name);
                 } else {
@@ -35,12 +44,32 @@ export class MediaWatcher {
         this.refresh();
     }
 
-    async _addPlayer(busName) {
+    _getProperty(proxy, propName) {
+        if (!proxy) return null;
+        try {
+            const variant = proxy.get_cached_property(propName);
+            return unwrap(variant);
+        } catch (_) {
+            return null;
+        }
+    }
+
+    _getPlayerStatus(proxy) {
+        if (!proxy) return 'Stopped';
+        try {
+            const val = this._getProperty(proxy, 'PlaybackStatus');
+            return val ? String(val) : 'Stopped';
+        } catch (_) {
+            return 'Stopped';
+        }
+    }
+
+    _addPlayer(busName) {
         if (this._players.has(busName)) return;
 
         try {
-            // Kita buat proxy untuk memantau status player
-            const proxy = await Gio.DBusProxy.new_for_bus(
+            // Gunakan sync constructor yang 100% stabil di GJS
+            const proxy = Gio.DBusProxy.new_for_bus_sync(
                 Gio.BusType.SESSION,
                 Gio.DBusProxyFlags.NONE,
                 null,
@@ -50,38 +79,64 @@ export class MediaWatcher {
                 null
             );
 
-            // Pasang pendeteksi perubahan status secara instan
-            const sigId = proxy.connect('g-properties-changed', (p, changed) => {
-                const changedProps = changed.unpack();
-                
-                // Jika statusnya berubah jadi 'Playing', jadikan dia prioritas utama
-                if (changedProps['PlaybackStatus']?.unpack() === 'Playing') {
-                    const data = this._players.get(busName);
-                    if (data) data.lastUpdate = Date.now();
-                }
-                this._checkPriority();
-            });
+            const status = this._getPlayerStatus(proxy);
+            const isPlaying = (status === 'Playing');
 
-            this._players.set(busName, {
+            const playerData = {
                 proxy,
-                sigId,
-                lastUpdate: Date.now()
+                sigId: null,
+                lastUpdate: isPlaying ? Date.now() : 0,
+                lastTitle: '',
+                lastArtist: '',
+            };
+
+            // Tangkap perubahan status, pergantian lagu, maupun perubahan metadata
+            playerData.sigId = proxy.connect('g-properties-changed', (_p, changed) => {
+                this._onPropertiesChanged(busName, changed);
             });
 
-            // Langsung cek setelah ditambahkan
+            this._players.set(busName, playerData);
             this._checkPriority();
         } catch (e) {
-            console.log(`[DynamicIsland] Gagal connect ke ${busName}`);
+            console.log(`[DynamicIsland] Gagal inisialisasi proxy ${busName}:`, e.message);
         }
+    }
+
+    _onPropertiesChanged(busName, changed) {
+        const player = this._players.get(busName);
+        if (!player) return;
+
+        let changedProps = {};
+        try {
+            changedProps = changed.deep_unpack() || {};
+        } catch (_) {
+            try {
+                changedProps = changed.unpack() || {};
+            } catch (_) {}
+        }
+
+        const status = changedProps['PlaybackStatus']
+            ? unwrap(changedProps['PlaybackStatus'])
+            : this._getPlayerStatus(player.proxy);
+
+        // KUNCI PERBAIKAN YOUTUBE vs SPOTIFY:
+        // Jika status menjadi Playing ATAU ada pembaruan Metadata (Spotify ganti lagu saat playing)
+        if (status === 'Playing' || 'PlaybackStatus' in changedProps || 'Metadata' in changedProps) {
+            player.lastUpdate = Date.now();
+        }
+
+        this._checkPriority();
     }
 
     _removePlayer(busName) {
         const player = this._players.get(busName);
         if (player) {
-            player.proxy.disconnect(player.sigId);
+            if (player.sigId && player.proxy) {
+                try { player.proxy.disconnect(player.sigId); } catch (_) {}
+            }
             this._players.delete(busName);
         }
-        
+
         if (this._activeBusName === busName) {
             this._activeBusName = null;
             this._checkPriority();
@@ -89,69 +144,102 @@ export class MediaWatcher {
     }
 
     _checkPriority() {
-        let bestBusName = null;
-        let latestTime = 0;
+        let bestPlayingBus = null;
+        let latestPlayingTime = -1;
 
-        // Cari player yang sedang PLAYING dengan waktu terbaru
+        let bestPausedBus = null;
+        let latestPausedTime = -1;
+
+        // Pilih pemutar terbaik berdasarkan status dan aktivitas terbarunya
         for (const [busName, player] of this._players) {
-            const status = player.proxy.get_cached_property('PlaybackStatus')?.unpack();
+            const status = this._getPlayerStatus(player.proxy);
+
             if (status === 'Playing') {
-                if (player.lastUpdate >= latestTime) {
-                    latestTime = player.lastUpdate;
-                    bestBusName = busName;
+                if (player.lastUpdate > latestPlayingTime) {
+                    latestPlayingTime = player.lastUpdate;
+                    bestPlayingBus = busName;
+                }
+            } else if (status === 'Paused') {
+                if (player.lastUpdate > latestPausedTime) {
+                    latestPausedTime = player.lastUpdate;
+                    bestPausedBus = busName;
                 }
             }
         }
 
-        // Jika tidak ada yang playing, cari yang PAUSED terakhir kali
-        if (!bestBusName) {
-            for (const [busName, player] of this._players) {
-                if (player.lastUpdate >= latestTime) {
-                    latestTime = player.lastUpdate;
-                    bestBusName = busName;
-                }
-            }
-        }
+        // Pemutar 'Playing' selalu didahulukan daripada 'Paused'
+        const targetBus = bestPlayingBus || bestPausedBus || null;
 
-        if (bestBusName) {
-            this._activeBusName = bestBusName;
+        if (targetBus) {
+            // Jika ada player yang aktif, batalkan grace timer penutupan
+            if (this._graceTimerId) {
+                GLib.source_remove(this._graceTimerId);
+                this._graceTimerId = null;
+            }
+            this._activeBusName = targetBus;
             this._emit();
         } else {
-            this._activeBusName = null;
-            this._onUpdate?.(null);
+            // KUNCI PERBAIKAN "MATI DI TENGAH LAGU":
+            // Beri Grace Period 1.5 detik jika player mendadak berhenti sesaat
+            // (misalnya buffer video YouTube atau transisi antartrack).
+            if (!this._graceTimerId && this._activeBusName) {
+                this._graceTimerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1500, () => {
+                    this._graceTimerId = null;
+                    this._activeBusName = null;
+                    this._onUpdate?.(null);
+                    return GLib.SOURCE_REMOVE;
+                });
+            } else if (!this._activeBusName) {
+                this._onUpdate?.(null);
+            }
         }
     }
 
     _emit() {
         if (!this._activeBusName) return;
         const player = this._players.get(this._activeBusName);
-        if (!player) return;
+        if (!player || !player.proxy) return;
 
         try {
             const proxy = player.proxy;
-            const status = proxy.get_cached_property('PlaybackStatus')?.unpack() || 'Stopped';
-            const metadata = proxy.get_cached_property('Metadata')?.unpack() || {};
+            const status = this._getPlayerStatus(proxy);
+            const metadataRaw = this._getProperty(proxy, 'Metadata');
+            const metadata = (metadataRaw && typeof metadataRaw === 'object') ? metadataRaw : {};
 
             // Parsing Metadata dengan aman
-            let title = metadata['xesam:title']?.unpack() || 'Unknown Title';
-            let artist = metadata['xesam:artist']?.unpack() || 'Unknown Artist';
-            if (Array.isArray(artist)) artist = artist.join(', ');
+            let title = unwrap(metadata['xesam:title']) || '';
+            let artist = unwrap(metadata['xesam:artist']) || '';
 
-            let artUrl = metadata['mpris:artUrl']?.unpack() || null;
-            let length = metadata['mpris:length']?.unpack() || 0;
+            if (Array.isArray(artist)) {
+                artist = artist.map(a => String(unwrap(a) || '')).filter(Boolean).join(', ');
+            } else if (artist) {
+                artist = String(artist);
+            }
+
+            // Pertahankan info track terakhir jika metadata sempat kosong saat buffering
+            if (!title && player.lastTitle) {
+                title = player.lastTitle;
+                artist = player.lastArtist;
+            } else if (title) {
+                player.lastTitle = title;
+                player.lastArtist = artist;
+            }
+
+            let artUrl = unwrap(metadata['mpris:artUrl']) || null;
+            let length = unwrap(metadata['mpris:length']) || 0;
 
             this._onUpdate?.({
                 status: String(status),
-                title: String(title),
-                artist: String(artist),
+                title: String(title || 'Unknown Title'),
+                artist: String(artist || 'Unknown Artist'),
                 artUrl: artUrl ? String(artUrl) : null,
-                length: Number(length),
-                canPlay: proxy.get_cached_property('CanPlay')?.unpack() ?? false,
-                canNext: proxy.get_cached_property('CanGoNext')?.unpack() ?? false,
-                canPrev: proxy.get_cached_property('CanGoPrevious')?.unpack() ?? false,
+                length: Number(length) || 0,
+                canPlay: Boolean(this._getProperty(proxy, 'CanPlay') ?? true),
+                canNext: Boolean(this._getProperty(proxy, 'CanGoNext') ?? true),
+                canPrev: Boolean(this._getProperty(proxy, 'CanGoPrevious') ?? true),
             });
         } catch (e) {
-            // Abaikan error sementara jika metadata sedang loading
+            console.log('[DynamicIsland] Error pada _emit MPRIS:', e.message);
         }
     }
 
@@ -159,14 +247,26 @@ export class MediaWatcher {
         if (!this._activeBusName) return 0;
         try {
             const player = this._players.get(this._activeBusName);
-            if (!player) return 0;
+            if (!player || !player.proxy) return 0;
+
+            // Batasi timeout hingga 300ms agar UI tidak pernah freeze
             const res = player.proxy.get_connection().call_sync(
-                this._activeBusName, MPRIS_PATH, 'org.freedesktop.DBus.Properties', 'Get',
-                new GLib.Variant('(ss)', [MPRIS_IFACE, 'Position']), 
-                null, Gio.DBusCallFlags.NONE, -1, null);
+                this._activeBusName,
+                MPRIS_PATH,
+                'org.freedesktop.DBus.Properties',
+                'Get',
+                new GLib.Variant('(ss)', [MPRIS_IFACE, 'Position']),
+                null,
+                Gio.DBusCallFlags.NONE,
+                300,
+                null
+            );
             const [variant] = res.deep_unpack();
-            return Number(variant.unpack()) || 0;
-        } catch (_) { return 0; }
+            const val = unwrap(variant);
+            return Number(val) || 0;
+        } catch (_) {
+            return 0;
+        }
     }
 
     togglePlayPause() { this._call('PlayPause'); }
@@ -176,26 +276,49 @@ export class MediaWatcher {
     _call(method) {
         if (!this._activeBusName) return;
         const player = this._players.get(this._activeBusName);
-        player?.proxy.call(method, null, Gio.DBusCallFlags.NONE, -1, null, null);
+        if (!player || !player.proxy) return;
+
+        // Perbarui waktu aktivitas saat tombol Dynamic Island diklik
+        player.lastUpdate = Date.now();
+        player.proxy.call(method, null, Gio.DBusCallFlags.NONE, 500, null, null);
     }
 
     refresh() {
-        // Cari aplikasi musik yang sudah terbuka sebelumnya
         try {
             const dbusProxy = Gio.DBusProxy.new_for_bus_sync(
-                Gio.BusType.SESSION, 0, null, 'org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus', null
+                Gio.BusType.SESSION,
+                Gio.DBusProxyFlags.NONE,
+                null,
+                'org.freedesktop.DBus',
+                '/org/freedesktop/DBus',
+                'org.freedesktop.DBus',
+                null
             );
-            const [names] = dbusProxy.call_sync('ListNames', null, 0, -1, null).deep_unpack();
+            const res = dbusProxy.call_sync('ListNames', null, 0, 1000, null);
+            const [names] = res.deep_unpack();
             names.filter(n => n.startsWith(MPRIS_PREFIX)).forEach(n => this._addPlayer(n));
-        } catch (_) {}
+        } catch (e) {
+            console.log('[DynamicIsland] Gagal refresh MPRIS list:', e.message);
+        }
     }
 
     destroy() {
-        if (this._ownerChangedId) this._bus.signal_unsubscribe(this._ownerChangedId);
+        if (this._graceTimerId) {
+            GLib.source_remove(this._graceTimerId);
+            this._graceTimerId = null;
+        }
+        if (this._ownerChangedId) {
+            this._bus.signal_unsubscribe(this._ownerChangedId);
+            this._ownerChangedId = null;
+        }
         for (const player of this._players.values()) {
-            player.proxy.disconnect(player.sigId);
+            if (player.sigId && player.proxy) {
+                try { player.proxy.disconnect(player.sigId); } catch (_) {}
+            }
         }
         this._players.clear();
+        this._activeBusName = null;
         this._onUpdate = null;
+        this._bus = null;
     }
 }

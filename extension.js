@@ -184,36 +184,15 @@ export default class DynamicIslandExtension extends Extension {
     _setView(viewName) {
         this._currentView = viewName;
 
-        // Reset semua class expanded bentuk kartu
-        this._island.remove_style_class_name('dynamic-island-cc-expanded');
-        this._island.remove_style_class_name('dynamic-island-media-expanded');
-        this._island.remove_style_class_name('dynamic-island-notif-expanded');
-        this._island.remove_style_class_name('dynamic-island-record-expanded-pill');
-
-        if (viewName === VIEW_CONTROL_CENTER) {
-            this._island.add_style_class_name('dynamic-island-cc-expanded');
-        } else if (viewName === VIEW_EXPANDED_MEDIA) {
-            this._island.add_style_class_name('dynamic-island-media-expanded');
-        } else if (viewName === VIEW_NOTIFICATION) {
-            this._island.add_style_class_name('dynamic-island-notif-expanded');
-        } else if (viewName === VIEW_EXPANDED_RECORD) {
-            this._island.add_style_class_name('dynamic-island-record-expanded-pill');
-        }
-
-        // Hapus tabrakan tata letak: sembunyikan view sebelumnya seketika agar tidak 
-        // berdampingan di dalam horizontal BoxLayout yang memicu lompatan (jerk)
         for (const [name, actor] of this._allViews.entries()) {
             if (name === viewName) {
+                actor.show();
                 actor.visible = true;
-                actor.opacity = 0;
-                actor.ease({
-                    opacity: 255,
-                    duration: 250,
-                    mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-                });
+                actor.opacity = 255; // Pastikan paksa terlihat
             } else {
-                actor.opacity = 0;
+                actor.hide();
                 actor.visible = false;
+                actor.opacity = 0;
             }
         }
     }
@@ -224,30 +203,22 @@ export default class DynamicIslandExtension extends Extension {
             return;
         }
 
-        if (this._notificationQueue.length > 0) {
-            this._processQueue();
-            return;
-        }
-
         let targetView = VIEW_IDLE;
         let targetWidth = this._idleWidth;
         let targetHeight = this._collapsedHeight;
 
+        // Prioritas: Perekaman Layar > Musik > Jam
         if (this._recorder?.isRecording) {
             targetView = VIEW_COMPACT_RECORD;
             targetWidth = this._compactRecordWidth;
-        } else if (this._currentDownload) {
-            targetView = VIEW_COMPACT_DL;
-            targetWidth = this._compactDlWidth;
-            targetHeight = this._dlHeight;
-        } else if (this._mediaActive) {
+        } else if (this._mediaActive && this._currentMedia) {
             targetView = VIEW_COMPACT_MEDIA;
             targetWidth = this._compactMediaWidth;
         }
 
         this._isExpanded = false;
         this._setView(targetView);
-        this._repositionAndResize(targetWidth, targetHeight, 320, Clutter.AnimationMode.EASE_OUT_CUBIC);
+        this._repositionAndResize(targetWidth, targetHeight, 300);
     }
 
     _getCurrentPillWidth() {
@@ -1262,29 +1233,45 @@ export default class DynamicIslandExtension extends Extension {
     }
 
     _onMediaUpdate(state) {
+        this._currentMedia = state;
+
+        // 1. Jika tidak ada musik atau player mati
         if (!state || state.status === 'Stopped') {
             this._mediaActive = false;
-            this._restoreBestView();
+            // Jika saat ini sedang menampilkan musik, kembalikan ke jam (idle)
+            if (this._currentView === VIEW_COMPACT_MEDIA || this._currentView === VIEW_EXPANDED_MEDIA) {
+                this._restoreBestView();
+            }
+            this._syncControlCenterUI();
             return;
         }
 
-        this._currentMedia = state;
-        
-        // Tetap anggap aktif meskipun Paused agar Island tidak "mati" di tengah lagu
-        this._mediaActive = (state.status === 'Playing' || state.status === 'Paused');
+        // 2. Tandai musik sebagai aktif (Playing maupun Paused)
+        this._mediaActive = true;
 
-        // Update UI...
-        this._titleLabel.set_text(state.title || 'Unknown');
+        // 3. Update Label & Gambar (Art)
+        this._titleLabel.set_text(state.title || 'Unknown Title');
         this._bodyLabel.set_text(state.artist || 'Unknown Artist');
         this._loadCoverArt(state.artUrl);
 
-        if (!this._isExpanded && !this._isControlCenterOpen) {
-            this._setView(VIEW_COMPACT_MEDIA);
-            this._repositionAndResize(this._compactMediaWidth, this._collapsedHeight);
+        // 4. Update Icon Play/Pause di mode expanded
+        const playIcon = (state.status === 'Playing') ? 'media-playback-pause-symbolic' : 'media-playback-start-symbolic';
+        if (this._playBtn && this._playBtn.child) {
+            this._playBtn.child.icon_name = playIcon;
         }
 
-        // Panggil update segera
+        // 5. LOGIKA PEMAKSA TAMPILAN
+        // Jika tidak sedang dalam mode besar (Expanded/Control Center)
+        if (!this._isExpanded && !this._isControlCenterOpen) {
+            // Tampilkan musik jika: Island sedang idle, ATAU sedang menampilkan musik tapi butuh refresh
+            if (this._currentView === VIEW_IDLE || this._currentView === VIEW_COMPACT_MEDIA) {
+                this._setView(VIEW_COMPACT_MEDIA);
+                this._repositionAndResize(this._compactMediaWidth, this._collapsedHeight, 300);
+            }
+        }
+
         this._updateMediaProgress();
+        this._syncControlCenterUI();
     }
 
     _syncControlCenterUI() {
