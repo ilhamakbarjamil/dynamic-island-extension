@@ -4,17 +4,16 @@ import Gio from 'gi://Gio';
 const MPRIS_PREFIX = 'org.mpris.MediaPlayer2.';
 const MPRIS_PATH   = '/org/mpris/MediaPlayer2';
 const MPRIS_IFACE  = 'org.mpris.MediaPlayer2.Player';
-const PROPS_IFACE  = 'org.freedesktop.DBus.Properties';
 
 export class MediaWatcher {
     constructor(onUpdate) {
         this._onUpdate = onUpdate;
         this._bus = Gio.DBus.session;
-        this._players = new Map(); // Untuk menyimpan banyak player (Spotify, Browser, dll)
+        this._players = new Map();
         this._activeBusName = null;
 
-        // Monitor aplikasi musik yang buka atau tutup
-        this._nameOwnerId = this._bus.signal_subscribe(
+        // Mendeteksi aplikasi musik yang baru dibuka atau ditutup
+        this._ownerChangedId = this._bus.signal_subscribe(
             'org.freedesktop.DBus',
             'org.freedesktop.DBus',
             'NameOwnerChanged',
@@ -40,7 +39,7 @@ export class MediaWatcher {
         if (this._players.has(busName)) return;
 
         try {
-            // Gunakan Proxy asinkron agar tidak membekukan desktop
+            // Kita buat proxy untuk memantau status player
             const proxy = await Gio.DBusProxy.new_for_bus(
                 Gio.BusType.SESSION,
                 Gio.DBusProxyFlags.NONE,
@@ -51,11 +50,11 @@ export class MediaWatcher {
                 null
             );
 
-            // Pasang pendeteksi perubahan status (Play/Pause/Ganti Lagu)
+            // Pasang pendeteksi perubahan status secara instan
             const sigId = proxy.connect('g-properties-changed', (p, changed) => {
                 const changedProps = changed.unpack();
                 
-                // Jika status berubah jadi Playing, update waktu aktivitas terakhir
+                // Jika statusnya berubah jadi 'Playing', jadikan dia prioritas utama
                 if (changedProps['PlaybackStatus']?.unpack() === 'Playing') {
                     const data = this._players.get(busName);
                     if (data) data.lastUpdate = Date.now();
@@ -69,9 +68,10 @@ export class MediaWatcher {
                 lastUpdate: Date.now()
             });
 
+            // Langsung cek setelah ditambahkan
             this._checkPriority();
         } catch (e) {
-            console.log(`[DynamicIsland] Gagal connect ke ${busName}: ${e.message}`);
+            console.log(`[DynamicIsland] Gagal connect ke ${busName}`);
         }
     }
 
@@ -90,63 +90,68 @@ export class MediaWatcher {
 
     _checkPriority() {
         let bestBusName = null;
-        let bestProxy = null;
         let latestTime = 0;
 
-        // LOGIKA: Cari yang sedang 'Playing' dengan waktu aktivitas terbaru
+        // Cari player yang sedang PLAYING dengan waktu terbaru
         for (const [busName, player] of this._players) {
             const status = player.proxy.get_cached_property('PlaybackStatus')?.unpack();
-            
             if (status === 'Playing') {
-                if (player.lastUpdate > latestTime) {
+                if (player.lastUpdate >= latestTime) {
                     latestTime = player.lastUpdate;
                     bestBusName = busName;
-                    bestProxy = player.proxy;
                 }
             }
         }
 
-        // FALLBACK: Jika tidak ada yang 'Playing', ambil yang terakhir kali aktif (Paused)
-        if (!bestBusName && this._players.size > 0) {
+        // Jika tidak ada yang playing, cari yang PAUSED terakhir kali
+        if (!bestBusName) {
             for (const [busName, player] of this._players) {
-                if (player.lastUpdate > latestTime) {
+                if (player.lastUpdate >= latestTime) {
                     latestTime = player.lastUpdate;
                     bestBusName = busName;
-                    bestProxy = player.proxy;
                 }
             }
         }
 
-        if (bestBusName && bestProxy) {
+        if (bestBusName) {
             this._activeBusName = bestBusName;
-            this._emit(bestProxy);
+            this._emit();
         } else {
             this._activeBusName = null;
             this._onUpdate?.(null);
         }
     }
 
-    _emit(proxy) {
+    _emit() {
+        if (!this._activeBusName) return;
+        const player = this._players.get(this._activeBusName);
+        if (!player) return;
+
         try {
+            const proxy = player.proxy;
             const status = proxy.get_cached_property('PlaybackStatus')?.unpack() || 'Stopped';
             const metadata = proxy.get_cached_property('Metadata')?.unpack() || {};
 
+            // Parsing Metadata dengan aman
             let title = metadata['xesam:title']?.unpack() || 'Unknown Title';
             let artist = metadata['xesam:artist']?.unpack() || 'Unknown Artist';
             if (Array.isArray(artist)) artist = artist.join(', ');
+
+            let artUrl = metadata['mpris:artUrl']?.unpack() || null;
+            let length = metadata['mpris:length']?.unpack() || 0;
 
             this._onUpdate?.({
                 status: String(status),
                 title: String(title),
                 artist: String(artist),
-                artUrl: metadata['mpris:artUrl']?.unpack() || null,
-                length: Number(metadata['mpris:length']?.unpack() || 0),
+                artUrl: artUrl ? String(artUrl) : null,
+                length: Number(length),
                 canPlay: proxy.get_cached_property('CanPlay')?.unpack() ?? false,
                 canNext: proxy.get_cached_property('CanGoNext')?.unpack() ?? false,
                 canPrev: proxy.get_cached_property('CanGoPrevious')?.unpack() ?? false,
             });
         } catch (e) {
-            console.log('[DynamicIsland] Error emit metadata:', e.message);
+            // Abaikan error sementara jika metadata sedang loading
         }
     }
 
@@ -154,7 +159,7 @@ export class MediaWatcher {
         if (!this._activeBusName) return 0;
         try {
             const player = this._players.get(this._activeBusName);
-            // Ambil posisi langsung dari DBus (karena Position tidak dikirim via signal)
+            if (!player) return 0;
             const res = player.proxy.get_connection().call_sync(
                 this._activeBusName, MPRIS_PATH, 'org.freedesktop.DBus.Properties', 'Get',
                 new GLib.Variant('(ss)', [MPRIS_IFACE, 'Position']), 
@@ -175,19 +180,18 @@ export class MediaWatcher {
     }
 
     refresh() {
-        // Cari semua player yang sudah jalan saat PC dinyalakan
-        const dbusProxy = Gio.DBusProxy.new_for_bus_sync(
-            Gio.BusType.SESSION, 0, null, 'org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus', null
-        );
-        const [names] = dbusProxy.call_sync('ListNames', null, 0, -1, null).deep_unpack();
-        names.filter(n => n.startsWith(MPRIS_PREFIX)).forEach(n => this._addPlayer(n));
+        // Cari aplikasi musik yang sudah terbuka sebelumnya
+        try {
+            const dbusProxy = Gio.DBusProxy.new_for_bus_sync(
+                Gio.BusType.SESSION, 0, null, 'org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus', null
+            );
+            const [names] = dbusProxy.call_sync('ListNames', null, 0, -1, null).deep_unpack();
+            names.filter(n => n.startsWith(MPRIS_PREFIX)).forEach(n => this._addPlayer(n));
+        } catch (_) {}
     }
 
     destroy() {
-        if (this._nameOwnerId) {
-            this._bus.signal_unsubscribe(this._nameOwnerId);
-            this._nameOwnerId = null;
-        }
+        if (this._ownerChangedId) this._bus.signal_unsubscribe(this._ownerChangedId);
         for (const player of this._players.values()) {
             player.proxy.disconnect(player.sigId);
         }
