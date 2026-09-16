@@ -2,6 +2,9 @@
   "name": "Dynamic Island",
   "description": "Overlay notch interaktif independen di tengah layar.",
   "uuid": "dynamic-island@ilhamakbarjamil.github.com",
-  "shell-version": ["46"],
-  "url": "https://github.com/akbar/dynamic-island"
+  "shell-version": [
+    "46"
+  ],
+  "url": "https://github.com/akbar/dynamic-island",
+  "settings-schema": "org.gnome.shell.extensions.dynamic-island"
 }

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+base="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+case "${1:-help}" in
+  enable|disable)
+    value=false
+    [[ "$1" == enable ]] && value=true
+    gsettings --schemadir "$base/schemas" set org.gnome.shell.extensions.dynamic-island test-mode "$value"
+    ;;
+  mount|bluetooth|notification|download|privacy|vpn|workspace|reset)
+    gdbus call --session --dest org.gnome.Shell \
+      --object-path /org/gnome/Shell/Extensions/DynamicIsland \
+      --method org.gnome.Shell.Extensions.DynamicIsland.Demo "$1"
+    ;;
+  *) printf '%s\n' 'Usage: tools/island-test enable|disable|mount|bluetooth|notification|download|privacy|vpn|workspace|reset' ;;
+esac

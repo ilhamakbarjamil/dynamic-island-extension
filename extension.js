@@ -16,6 +16,7 @@ import { WorkspaceWatcher } from './workspace.js';
 import { MountWatcher } from './mount.js';
 import { DownloadWatcher } from './download.js';
 import { VpnWatcher } from './vpn.js';
+import { PopupQueue } from './popupQueue.js';
 
 // KUMPULAN STATE EKSKLUSIF
 const VIEW_IDLE = 'idle';
@@ -38,16 +39,20 @@ export default class DynamicIslandExtension extends Extension {
     enable() {
         console.log('[DynamicIsland] Mengaktifkan iOS Pro Native Design System...');
 
+        this._preferences = this.getSettings();
+        this._popupQueue = new PopupQueue();
+        this._testTimers = new Set();
+        this._realPrivacyState = {camera: false, mic: false};
         this._settings = new Gio.Settings({ schema_id: 'org.gnome.desktop.notifications' });
         this._originalShowBanners = this._settings.get_boolean('show-banners');
-        this._settings.set_boolean('show-banners', false);
+        if (this._featureEnabled('notifications')) this._settings.set_boolean('show-banners', false);
 
-        if (Main.messageTray._bannerBin) {
+        if (this._featureEnabled('notifications') && Main.messageTray._bannerBin) {
             Main.messageTray._bannerBin.hide();
         }
 
         // ================= APPLE HIG PRECISE GEOMETRY =================
-        this._topMargin = 2;
+        this._topMargin = this._preferences.get_int('top-offset');
         this._idleWidth = 128;
         this._privacyExtraWidth = 0;
         this._collapsedHeight = 30;
@@ -137,7 +142,8 @@ export default class DynamicIslandExtension extends Extension {
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
         });
-        this._island.set_pivot_point(0.5, 0.0);
+        this._island.set_pivot_point(0, 0);
+        this._island.set_scale(this._preferences.get_double('island-scale'), this._preferences.get_double('island-scale'));
 
         // Views Registry
         this._allViews = new Map();
@@ -161,12 +167,16 @@ export default class DynamicIslandExtension extends Extension {
         Main.uiGroup.add_child(this._island);
         this._reposition(this._idleWidth);
 
+        this._initPrivacyOverlay();
+        this._preferencesChangedId = this._preferences.connect('changed', (_settings, key) => this._applyPreferences(key));
+        this._initTestService();
+
         // Core Subsystems
         this._cc = new ControlCenterManager(() => this._syncControlCenterUI());
         this._media = new MediaWatcher(state => this._onMediaUpdate(state));
         this._battery = new BatteryWatcher(event => this._onBatteryEvent(event));
         this._bluetooth = new BluetoothWatcher(event => this._onBluetoothConnected(event));
-        this._privacy = new PrivacyWatcher(state => this._onPrivacyState(state));
+        this._privacy = this._featureEnabled('privacy') ? new PrivacyWatcher(state => this._onPrivacyState(state)) : null;
         this._recorder = new ScreenRecordWatcher({
             onRecordingStarted: () => this._onRecordingStarted(),
             onRecordingStopped: () => this._onRecordingStopped(),
@@ -177,12 +187,13 @@ export default class DynamicIslandExtension extends Extension {
             onDriveMounted: data => this._onDriveMounted(data),
             onDriveRemoved: name => this._onDriveRemoved(name),
         });
-        this._dlWatcher = new DownloadWatcher(data => this._onDownloadProgress(data));
-        this._vpnWatcher = new VpnWatcher(data => this._onVpnChanged(data));
+        this._dlWatcher = this._featureEnabled('download') ? new DownloadWatcher(data => this._onDownloadProgress(data)) : null;
+        this._vpnWatcher = this._featureEnabled('vpn') ? new VpnWatcher(data => this._onVpnChanged(data)) : null;
 
         // Notifications
         this._sourceConnections = new Map();
         this._notificationConnections = new Map();
+        this._destroyedNotifications = new WeakSet();
         Main.messageTray.getSources().forEach(s => this._connectSource(s));
         this._sourceAddedId = Main.messageTray.connect('source-added', (_t, s) => this._connectSource(s));
         this._sourceRemovedId = Main.messageTray.connect('source-removed', (_t, s) => this._disconnectSource(s));
@@ -193,7 +204,7 @@ export default class DynamicIslandExtension extends Extension {
         this._startClockAndWave();
 
         // Boot View
-        this._setView(VIEW_IDLE);
+        this._restoreBestView();
     }
 
     // ================= STATE & SQUIRCLE CLASS SWITCHER =================
@@ -224,6 +235,15 @@ export default class DynamicIslandExtension extends Extension {
             return;
         }
 
+        const nextPopup = this._popupQueue.next();
+        if (nextPopup) {
+            this._isExpanded = false;
+            nextPopup();
+            if (this._popupQueue.active) return;
+            this._restoreBestView();
+            return;
+        }
+
         if (this._pendingBluetoothEvent) {
             const event = this._pendingBluetoothEvent;
             this._pendingBluetoothEvent = null;
@@ -237,7 +257,7 @@ export default class DynamicIslandExtension extends Extension {
         let targetHeight = this._collapsedHeight;
 
         // Prioritas: Perekaman Layar > Musik > Jam
-        if (this._recorder?.isRecording) {
+        if (this._featureEnabled('recording') && this._recorder?.isRecording) {
             targetView = VIEW_COMPACT_RECORD;
             targetWidth = this._compactRecordWidth;
         } else if (this._currentDownload) {
@@ -311,7 +331,7 @@ export default class DynamicIslandExtension extends Extension {
             y_align: Clutter.ActorAlign.CENTER,
             child: this._idleClockLabel,
         }));
-        this._idleBox.add_child(this._privacyBox);
+        // Privacy is rendered separately so every view retains its indicators.
 
         this._island.add_child(this._idleBox);
         this._allViews.set(VIEW_IDLE, this._idleBox);
@@ -334,7 +354,7 @@ export default class DynamicIslandExtension extends Extension {
             actor.ease({opacity: 255, delay: 100, duration: 180,
                 mode: Clutter.AnimationMode.EASE_OUT_QUAD});
         }
-        this._bannerDismissId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, duration, () => {
+        this._bannerDismissId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, this._preferences.get_int('popup-duration'), () => {
             this._bannerDismissId = null;
             if (this._currentView === view) this._restoreBestView();
             return GLib.SOURCE_REMOVE;
@@ -383,7 +403,8 @@ export default class DynamicIslandExtension extends Extension {
     }
 
     _onWorkspaceChanged({ index, totalWorkspaces, name }) {
-        if (this._isControlCenterOpen || this._isExpanded) return;
+        if (!this._admitPopup('workspace', 30, () => this._onWorkspaceChanged({index, totalWorkspaces, name}))) return;
+        if (this._isControlCenterOpen) return;
         if (this._bannerDismissId) GLib.source_remove(this._bannerDismissId);
 
         this._wsDotsBox.destroy_all_children();
@@ -458,6 +479,7 @@ export default class DynamicIslandExtension extends Extension {
     }
 
     _onDownloadProgress(data) {
+        if (!this._featureEnabled('download')) data = null;
         if (!data) {
             if (this._dlCompletedTimeoutId) return;
             this._cancelDownloadCollapse();
@@ -931,6 +953,7 @@ export default class DynamicIslandExtension extends Extension {
     }
 
     _onVpnChanged({ name, isConnected }) {
+        if (!this._admitPopup('vpn', 30, () => this._onVpnChanged({name, isConnected}))) return;
         if (this._isControlCenterOpen) return;
         if (this._bannerDismissId) {
             GLib.source_remove(this._bannerDismissId);
@@ -1039,6 +1062,7 @@ export default class DynamicIslandExtension extends Extension {
     }
 
     _onDriveMounted(data) {
+        if (!this._admitPopup('mount', 30, () => this._onDriveMounted(data))) return;
         if (this._isControlCenterOpen) return;
         if (this._bannerDismissId) GLib.source_remove(this._bannerDismissId);
 
@@ -1052,6 +1076,7 @@ export default class DynamicIslandExtension extends Extension {
     }
 
     _onDriveRemoved(name) {
+        if (!this._admitPopup('mount', 30, () => this._onDriveRemoved(name))) return;
         if (this._isControlCenterOpen) return;
         this._mountTitle.set_text(name || 'Drive');
         this._mountSubtitle.set_text('Terputus');
@@ -1083,6 +1108,7 @@ export default class DynamicIslandExtension extends Extension {
                 this._onNotification(notification);
         });
         const destroyed = notification.connect('destroy', () => {
+            this._destroyedNotifications.add(notification);
             this._notificationQueue = this._notificationQueue.filter(n => n !== notification);
             this._unwatchNotification(notification);
             if (this._currentNotification === notification) this._dismissNotification();
@@ -1097,6 +1123,8 @@ export default class DynamicIslandExtension extends Extension {
     }
 
     _onNotification(notification) {
+        if (this._destroyedNotifications?.has(notification)) return;
+        if (!this._admitPopup('notifications', 80, () => this._onNotification(notification))) return;
         // The latest message replaces the preview; older messages stay in GNOME history.
         this._notificationQueue = [notification];
         this._processQueue();
@@ -1145,7 +1173,7 @@ export default class DynamicIslandExtension extends Extension {
                 mode: Clutter.AnimationMode.EASE_OUT_QUAD});
         }
         if (this._autoCollapseId) GLib.source_remove(this._autoCollapseId);
-        this._autoCollapseId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 4500, () => {
+        this._autoCollapseId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, this._preferences.get_int('popup-duration'), () => {
             this._autoCollapseId = null;
             if (this._currentView === VIEW_NOTIFICATION && this._island.hover)
                 this._waitingForMouseLeave = true;
@@ -1207,6 +1235,7 @@ export default class DynamicIslandExtension extends Extension {
     }
 
     _onBluetoothConnected({ name, icon = '', battery, kind = 'device', connected = true }) {
+        if (!this._admitPopup('bluetooth', 30, () => this._onBluetoothConnected({name, icon, battery, kind, connected}))) return;
         if (this._isControlCenterOpen) {
             this._pendingBluetoothEvent = {name, icon, battery, kind, connected};
             return;
@@ -1246,7 +1275,7 @@ export default class DynamicIslandExtension extends Extension {
                 mode: Clutter.AnimationMode.EASE_OUT_QUAD});
         }
 
-        this._bannerDismissId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2200, () => {
+        this._bannerDismissId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, this._preferences.get_int('popup-duration'), () => {
             this._bannerDismissId = null;
             if (this._currentView === VIEW_BT) this._restoreBestView();
             return GLib.SOURCE_REMOVE;
@@ -1254,6 +1283,8 @@ export default class DynamicIslandExtension extends Extension {
     }
 
     _onBatteryEvent({ isCharging, percentage }) {
+        if (!isCharging) return;
+        if (!this._admitPopup('battery', 30, () => this._onBatteryEvent({isCharging, percentage}))) return;
         if (!isCharging || this._isControlCenterOpen) return;
         if (this._bannerDismissId) GLib.source_remove(this._bannerDismissId);
 
@@ -1261,19 +1292,16 @@ export default class DynamicIslandExtension extends Extension {
         this._chargingPercentLabel.set_text(`${percentage}%`);
         this._batteryFill.width = Math.max(2, Math.floor((percentage / 100) * 18));
 
-        this._setView(VIEW_CHARGING);
-        this._repositionAndResize(this._chargingWidth, this._collapsedHeight, 320, Clutter.AnimationMode.EASE_OUT_CUBIC);
-
-        this._bannerDismissId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 3000, () => {
-            this._bannerDismissId = null;
-            this._restoreBestView();
-            return GLib.SOURCE_REMOVE;
-        });
+        this._showUtilityPopup(VIEW_CHARGING, this._chargingBox, this._chargingWidth, this._collapsedHeight, 2200);
     }
 
     _hookOsd() {
         this._origOsdShow = Main.osdWindowManager.show.bind(Main.osdWindowManager);
         Main.osdWindowManager.show = (monitorIndex, icon, label, level, maxLevel) => {
+            if (!this._featureEnabled('hud')) {
+                this._origOsdShow(monitorIndex, icon, label, level, maxLevel);
+                return;
+            }
             let iconName = '';
             if (icon) {
                 if (typeof icon.get_names === 'function') iconName = icon.get_names()[0] || '';
@@ -1292,6 +1320,7 @@ export default class DynamicIslandExtension extends Extension {
     }
 
     _showOsdInIsland({ icon, iconName, level, maxLevel, isVolume }) {
+        if (!this._admitPopup('hud', 60, () => this._showOsdInIsland({icon, iconName, level, maxLevel, isVolume}))) return;
         if (this._isControlCenterOpen) return;
         if (this._bannerDismissId) GLib.source_remove(this._bannerDismissId);
 
@@ -1311,17 +1340,11 @@ export default class DynamicIslandExtension extends Extension {
 
         this._hudSliderFill.width = isMuted ? 0 : Math.round(136 * ratio);
 
-        this._setView(VIEW_HUD);
-        this._repositionAndResize(this._hudWidth, this._collapsedHeight, 320, Clutter.AnimationMode.EASE_OUT_CUBIC);
-
-        this._bannerDismissId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1800, () => {
-            this._bannerDismissId = null;
-            this._restoreBestView();
-            return GLib.SOURCE_REMOVE;
-        });
+        this._showUtilityPopup(VIEW_HUD, this._hudBox, this._hudWidth, this._collapsedHeight, 2200);
     }
 
     _onRecordingStarted() {
+        if (!this._featureEnabled('recording')) return;
         this._countdownNumber = 3;
         this._countdownLabel.set_text('3');
         this._setView(VIEW_COUNTDOWN);
@@ -1343,6 +1366,7 @@ export default class DynamicIslandExtension extends Extension {
     }
 
     _onRecordingTick({ formatted }) {
+        if (!this._featureEnabled('recording')) return;
         this._compactRecordLabel.set_text(formatted);
         this._recordBigLabel.set_text(formatted);
     }
@@ -1391,6 +1415,8 @@ export default class DynamicIslandExtension extends Extension {
     }
 
     _onMediaUpdate(state) {
+        if (state) this._lastMediaState = state;
+        if (!this._featureEnabled('media')) state = null;
         this._currentMedia = state;
         const playing = state?.status === 'Playing';
         if (playing || !state || state.status === 'Stopped') {
@@ -1627,7 +1653,7 @@ export default class DynamicIslandExtension extends Extension {
                 if (this._isControlCenterOpen) return;
 
                 if (!this._isExpanded && !this._isProcessingQueue) {
-                    if (this._recorder?.isRecording) {
+                    if (this._featureEnabled('recording') && this._recorder?.isRecording) {
                         this._isExpanded = true;
                         this._setView(VIEW_EXPANDED_RECORD);
                         this._repositionAndResize(this._mediaExpandedWidth, this._recordExpandedHeight, 340, Clutter.AnimationMode.EASE_OUT_CUBIC);
@@ -1658,11 +1684,14 @@ export default class DynamicIslandExtension extends Extension {
         this._recordStopBtn.connect('clicked', () => this._recorder.stopRecordingSession());
     }
 
-    _onPrivacyState({ camera, mic }) {
+    _onPrivacyState({ camera, mic }, simulated = false) {
+        if (!simulated) this._realPrivacyState = {camera, mic};
+        if (!this._featureEnabled('privacy')) camera = mic = false;
         this._cameraDot.visible = camera;
         this._micDot.visible = mic;
         this._privacyBox.visible = (camera || mic);
-        this._idleLeftSpacer.visible = (camera || mic);
+        this._idleLeftSpacer.visible = false;
+        this._positionPrivacyOverlay();
         const extraWidth = camera && mic ? 24 : 0;
         if (extraWidth !== this._privacyExtraWidth) {
             this._privacyExtraWidth = extraWidth;
@@ -1688,7 +1717,8 @@ export default class DynamicIslandExtension extends Extension {
         this._clockTickId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
             this._updateClock();
             
-            if (this._mediaActive && this._currentMedia) {
+            if (this._mediaActive && this._currentMedia &&
+                [VIEW_EXPANDED_MEDIA, VIEW_CONTROL_CENTER].includes(this._currentView)) {
                 this._updateMediaProgress();
             }
             return GLib.SOURCE_CONTINUE;
@@ -1697,7 +1727,8 @@ export default class DynamicIslandExtension extends Extension {
         // Ticker Animasi Wave (Berjalan setiap 150ms)
         this._wavesAreReset = false;
         this._waveTickId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 150, () => {
-            if (this._mediaActive && this._currentMedia?.status === 'Playing') {
+            if (this._mediaActive && this._currentMedia?.status === 'Playing' &&
+                [VIEW_COMPACT_MEDIA, VIEW_EXPANDED_MEDIA].includes(this._currentView)) {
                 this._wavesAreReset = false;
                 this._animateWaves(); // Jalankan bar goyang naik-turun
             } else if (!this._wavesAreReset) {
@@ -1710,18 +1741,187 @@ export default class DynamicIslandExtension extends Extension {
 
     _reposition(width) {
         if (!this._island || !this._monitor) return;
-        const x = this._monitor.x + Math.floor((this._monitor.width - width) / 2);
-        const y = this._monitor.y + this._topMargin;
-        this._island.set_position(x, y);
+        const scale = this._preferences.get_double('island-scale');
+        const x = this._monitor.x + Math.max(0, Math.min(this._monitor.width - width * scale,
+            (this._monitor.width - width * scale) / 2 + this._preferences.get_int('horizontal-offset')));
+        this._island.set_position(Math.round(x), this._monitor.y + this._topMargin);
+        this._positionPrivacyOverlay();
     }
 
     _repositionAndResize(width, height, duration = 320, mode = Clutter.AnimationMode.EASE_OUT_CUBIC) {
-        const targetX = this._monitor.x + Math.floor((this._monitor.width - width) / 2);
+        if (!this._monitor) return;
+        const scale = this._preferences.get_double('island-scale');
+        const targetX = this._monitor.x + Math.max(0, Math.min(this._monitor.width - width * scale,
+            (this._monitor.width - width * scale) / 2 + this._preferences.get_int('horizontal-offset')));
         const targetY = this._monitor.y + this._topMargin;
-        this._island.ease({ width, height, x: targetX, y: targetY, duration, mode });
+        this._island.ease({width, height, x: Math.round(targetX), y: targetY, duration, mode});
+    }
+
+    _featureEnabled(feature) {
+        return this._preferences.get_boolean(`enable-${feature}`);
+    }
+
+    _admitPopup(feature, priority, callback) {
+        if (!this._featureEnabled(feature)) return false;
+        const blocked = this._isControlCenterOpen || this._isDraggingSeek ||
+            this._currentView === VIEW_COUNTDOWN ||
+            (this._isExpanded && [VIEW_EXPANDED_MEDIA, VIEW_EXPANDED_RECORD].includes(this._currentView));
+        if (!this._popupQueue.request(feature, priority, callback, blocked)) return false;
+        if (this._bannerDismissId) GLib.source_remove(this._bannerDismissId);
+        this._bannerDismissId = null;
+        if (feature !== 'notifications' && this._autoCollapseId) {
+            GLib.source_remove(this._autoCollapseId);
+            this._autoCollapseId = null;
+        }
+        return true;
+    }
+
+    _applyPreferences(key) {
+        if (key === 'test-mode') {
+            if (!this._preferences.get_boolean(key)) this._resetDemo();
+            return;
+        }
+        if (key === 'enable-notifications') {
+            const enabled = this._featureEnabled('notifications');
+            this._settings.set_boolean('show-banners', enabled ? false : this._originalShowBanners);
+            if (Main.messageTray._bannerBin) Main.messageTray._bannerBin.visible = !enabled;
+            if (!enabled) {
+                this._notificationQueue = [];
+                this._dismissNotification();
+            }
+        }
+        if (key === 'enable-download') {
+            this._dlWatcher?.destroy();
+            this._dlWatcher = null;
+            if (this._featureEnabled('download')) this._dlWatcher = new DownloadWatcher(data => this._onDownloadProgress(data));
+            else {
+                this._currentDownload = null;
+                this._cancelDownloadCollapse();
+                if (this._dlCompletedTimeoutId) GLib.source_remove(this._dlCompletedTimeoutId);
+                this._dlCompletedTimeoutId = null;
+            }
+        }
+        if (key === 'enable-vpn') {
+            this._vpnWatcher?.destroy();
+            this._vpnWatcher = this._featureEnabled('vpn') ? new VpnWatcher(data => this._onVpnChanged(data)) : null;
+        }
+        if (key === 'enable-privacy') {
+            this._privacy?.destroy();
+            this._privacy = this._featureEnabled('privacy') ? new PrivacyWatcher(state => this._onPrivacyState(state)) : null;
+            this._onPrivacyState(this._realPrivacyState);
+        }
+        if (key === 'enable-media') this._onMediaUpdate(this._featureEnabled('media') ? this._lastMediaState : null);
+        if (key.startsWith('enable-')) {
+            this._popupQueue.clear();
+            if (!this._isControlCenterOpen) this._restoreBestView();
+        }
+        this._topMargin = this._preferences.get_int('top-offset');
+        const scale = this._preferences.get_double('island-scale');
+        this._island.set_scale(scale, scale);
+        this._reposition(this._getCurrentPillWidth());
+    }
+
+    _initPrivacyOverlay() {
+        this._idleBox.remove_child(this._privacyBox);
+        this._privacyBox.style_class = 'dynamic-island-privacy-overlay';
+        this._privacyBox.reactive = false;
+        Main.uiGroup.add_child(this._privacyBox);
+        for (const property of ['x', 'y', 'width', 'height', 'scale-x', 'scale-y'])
+            this._island.connect(`notify::${property}`, () => this._positionPrivacyOverlay());
+        this._positionPrivacyOverlay();
+    }
+
+    _positionPrivacyOverlay() {
+        if (!this._privacyBox || !this._island || !this._monitor) return;
+        const scale = this._preferences.get_double('island-scale');
+        this._privacyBox.set_scale(scale, scale);
+        const width = (this._cameraDot.visible && this._micDot.visible ? 36 : 24) * scale;
+        const right = this._island.x + this._island.width * scale + 6;
+        const x = Math.min(right, this._monitor.x + this._monitor.width - width - 4);
+        this._privacyBox.set_position(Math.round(x), Math.round(this._island.y +
+            (this._island.height * scale - 22 * scale) / 2));
+        Main.uiGroup.set_child_above_sibling(this._privacyBox, this._island);
+    }
+
+    _initTestService() {
+        const xml = '<node><interface name="org.gnome.Shell.Extensions.DynamicIsland"><method name="Demo"><arg type="s" direction="in"/><arg type="s" direction="out"/></method></interface></node>';
+        this._testObject = Gio.DBusExportedObject.wrapJSObject(xml, {
+            Demo: name => {
+                if (!this._preferences.get_boolean('test-mode')) return 'Mode tes belum aktif: jalankan tools/island-test enable';
+                return this._runDemo(name);
+            },
+        });
+        this._testObject.export(Gio.DBus.session, '/org/gnome/Shell/Extensions/DynamicIsland');
+    }
+
+    _demoLater(delay, callback) {
+        const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => {
+            this._testTimers.delete(id);
+            callback();
+            return GLib.SOURCE_REMOVE;
+        });
+        this._testTimers.add(id);
+    }
+
+    _resetDemo() {
+        for (const id of this._testTimers) GLib.source_remove(id);
+        this._testTimers.clear();
+        this._popupQueue.clear();
+        if (this._currentDownload?.simulated) {
+            if (this._dlCompletedTimeoutId) GLib.source_remove(this._dlCompletedTimeoutId);
+            this._dlCompletedTimeoutId = null;
+            this._onDownloadProgress(null);
+        }
+        if (this._currentNotification?.simulated) this._dismissNotification();
+        this._onPrivacyState(this._realPrivacyState, true);
+        if (!this._isControlCenterOpen) this._restoreBestView();
+    }
+
+    _runDemo(name) {
+        if (!['mount', 'bluetooth', 'notification', 'download', 'privacy', 'vpn', 'workspace', 'reset'].includes(name)) return 'Jenis tes tidak dikenal';
+        this._resetDemo();
+        switch (name) {
+        case 'mount':
+            this._onDriveMounted({name: 'Test USB', mount: null});
+            this._demoLater(4000, () => this._onDriveRemoved('Test USB'));
+            break;
+        case 'bluetooth':
+            this._onBluetoothConnected({name: 'Bluetooth', kind: 'adapter', connected: true});
+            this._demoLater(4000, () => this._onBluetoothConnected({name: 'Bluetooth', kind: 'adapter', connected: false}));
+            break;
+        case 'notification':
+            this._onNotification({title: 'Pesan uji', body: 'Ini simulasi pesan panjang untuk memeriksa batas teks, ikon dan animasi. '.repeat(8), source: {title: 'Simulasi'}, simulated: true});
+            break;
+        case 'download':
+            if (this._currentDownload) return 'Tunggu unduhan aktif selesai sebelum simulasi';
+            for (let i = 0; i <= 5; i++) this._demoLater(i * 1000 + 1, () =>
+                {
+                    if (!this._currentDownload || this._currentDownload.simulated)
+                        this._onDownloadProgress({filename: 'Simulasi.zip', percentage: i * 20, size: i * 1048576, isCompleted: i === 5, simulated: true});
+                });
+            break;
+        case 'privacy':
+            this._onPrivacyState({camera: true, mic: true}, true);
+            this._demoLater(5000, () => this._onPrivacyState(this._realPrivacyState, true));
+            break;
+        case 'vpn':
+            this._onVpnChanged({name: 'Test VPN', isConnected: true});
+            this._demoLater(4000, () => this._onVpnChanged({name: 'Test VPN', isConnected: false}));
+            break;
+        case 'workspace': this._onWorkspaceChanged({index: 2, totalWorkspaces: 4, name: 'Test Desk 2'}); break;
+        }
+        return 'Simulasi: ' + name;
     }
 
     disable() {
+        this._testObject?.unexport();
+        this._testObject = null;
+        for (const id of this._testTimers ?? []) GLib.source_remove(id);
+        this._testTimers?.clear();
+        this._popupQueue?.clear();
+        if (this._preferencesChangedId) this._preferences.disconnect(this._preferencesChangedId);
+        this._preferencesChangedId = null;
+        this._privacyBox?.destroy();
         if (this._clockTickId) GLib.source_remove(this._clockTickId);
         if (this._waveTickId) GLib.source_remove(this._waveTickId);
         if (this._bannerDismissId) GLib.source_remove(this._bannerDismissId);

@@ -894,3 +894,12 @@
 .dynamic-island-mount-eject-btn:active {
     background-color: rgba(255, 255, 255, 0.28);
 }
+
+/* Privacy stays visible beside every view without covering its controls. */
+.dynamic-island-privacy-overlay {
+    spacing: 5px;
+    padding: 0 6px;
+    height: 22px;
+    border-radius: 11px;
+    background-color: #000000;
+}
