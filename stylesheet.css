@@ -845,3 +845,52 @@
     font-weight: 400;
     min-width: 0;
 }
+
+/* Mount popup: inset content follows the rounded pill silhouette. */
+.dynamic-island-mount-box {
+    padding: 10px 18px;
+    spacing: 12px;
+}
+
+.dynamic-island-mount-icon-bin {
+    width: 32px;
+    height: 32px;
+    color: #f5f5f7;
+}
+
+.dynamic-island-mount-text-col {
+    spacing: 3px;
+    min-width: 0;
+}
+
+.dynamic-island-mount-title {
+    color: #f5f5f7;
+    font-size: 13px;
+    font-weight: 600;
+    min-width: 0;
+}
+
+.dynamic-island-mount-subtitle {
+    color: #98989f;
+    font-size: 11px;
+    font-weight: 400;
+    min-width: 0;
+}
+
+.dynamic-island-mount-eject-btn {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border-radius: 14px;
+    background-color: rgba(255, 255, 255, 0.10);
+    color: #f5f5f7;
+}
+
+.dynamic-island-mount-eject-btn:hover,
+.dynamic-island-mount-eject-btn:focus {
+    background-color: rgba(255, 255, 255, 0.20);
+}
+
+.dynamic-island-mount-eject-btn:active {
+    background-color: rgba(255, 255, 255, 0.28);
+}

@@ -49,6 +49,7 @@ export default class DynamicIslandExtension extends Extension {
         // ================= APPLE HIG PRECISE GEOMETRY =================
         this._topMargin = 2;
         this._idleWidth = 128;
+        this._privacyExtraWidth = 0;
         this._collapsedHeight = 30;
         this._compactMediaWidth = 174;
         this._compactRecordWidth = 154;
@@ -61,7 +62,7 @@ export default class DynamicIslandExtension extends Extension {
         this._chargingWidth = 206;
         this._bluetoothWidth = 250;
         this._pendingBluetoothEvent = null;
-        this._mountWidth = 274;
+        this._mountWidth = 280;
 
         // Expanded States (Apple Now Playing Squircle 370x160pt)
         this._mediaExpandedWidth = 370;
@@ -232,7 +233,7 @@ export default class DynamicIslandExtension extends Extension {
         }
 
         let targetView = VIEW_IDLE;
-        let targetWidth = this._idleWidth;
+        let targetWidth = this._idleWidth + this._privacyExtraWidth;
         let targetHeight = this._collapsedHeight;
 
         // Prioritas: Perekaman Layar > Musik > Jam
@@ -269,7 +270,7 @@ export default class DynamicIslandExtension extends Extension {
             case VIEW_COMPACT_RECORD: return this._compactRecordWidth;
             case VIEW_COMPACT_DL: return this._compactDlWidth;
             case VIEW_COMPACT_MEDIA: return this._compactMediaWidth;
-            default: return this._idleWidth;
+            default: return this._idleWidth + this._privacyExtraWidth;
         }
     }
 
@@ -805,7 +806,14 @@ export default class DynamicIslandExtension extends Extension {
 
     _initMountView() {
         this._mountBox = new St.BoxLayout({ style_class: 'dynamic-island-mount-box', vertical: false, x_expand: true, y_expand: true, y_align: Clutter.ActorAlign.CENTER });
-        this._mountIconBin = new St.Bin({ style_class: 'dynamic-island-mount-icon-bin', child: new St.Icon({ gicon: this._utilityGlyph('M4 4h16v16H4Z M4 15h16 M16 18h1'), icon_size: 14 }) });
+        this._mountIconBin = new St.Bin({
+            style_class: 'dynamic-island-mount-icon-bin',
+            y_align: Clutter.ActorAlign.CENTER,
+            child: new St.Icon({
+                gicon: this._utilityGlyph('M7 3h10a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3Z M4 15h16 M16 18h.01'),
+                icon_size: 24,
+            }),
+        });
         this._mountTextCol = new St.BoxLayout({ style_class: 'dynamic-island-mount-text-col', vertical: true, x_expand: true, y_align: Clutter.ActorAlign.CENTER });
         this._mountTitle = new St.Label({ style_class: 'dynamic-island-mount-title', text: 'USB Drive' });
         this._mountTitle.clutter_text.ellipsize = Pango.EllipsizeMode.END;
@@ -814,7 +822,7 @@ export default class DynamicIslandExtension extends Extension {
         this._mountTextCol.add_child(this._mountTitle);
         this._mountTextCol.add_child(this._mountSubtitle);
 
-        this._mountEjectBtn = new St.Button({ style_class: 'dynamic-island-mount-eject-btn', child: new St.Icon({ gicon: this._utilityGlyph('m5 14 7-9 7 9Z M5 19h14'), icon_size: 12 }), y_align: Clutter.ActorAlign.CENTER, can_focus: true });
+        this._mountEjectBtn = new St.Button({ style_class: 'dynamic-island-mount-eject-btn', accessible_name: 'Lepas drive', reactive: true, child: new St.Icon({ gicon: this._utilityGlyph('m6 13 6-8 6 8Z M6 18h12'), icon_size: 16 }), y_align: Clutter.ActorAlign.CENTER, can_focus: true });
         this._mountEjectBtn.connect('clicked', () => {
             if (this._currentMount?.mount) {
                 const selected = this._currentMount;
@@ -824,7 +832,7 @@ export default class DynamicIslandExtension extends Extension {
                     this._mountSubtitle.set_text(ok ? 'Aman dicabut' : 'Gagal melepas');
                     this._mountEjectBtn.visible = !ok;
                     this._mountEjectBtn.reactive = true;
-                    this._showUtilityPopup(VIEW_MOUNT, this._mountBox, this._mountWidth, 48, 2200);
+                    this._showUtilityPopup(VIEW_MOUNT, this._mountBox, this._mountWidth, 64, 2200);
                 });
             }
         });
@@ -1040,7 +1048,7 @@ export default class DynamicIslandExtension extends Extension {
         this._mountSubtitle.set_text('Terhubung');
         this._mountEjectBtn.visible = Boolean(data.mount?.can_eject?.() || data.mount?.can_unmount?.());
 
-        this._showUtilityPopup(VIEW_MOUNT, this._mountBox, this._mountWidth, 48, 2600);
+        this._showUtilityPopup(VIEW_MOUNT, this._mountBox, this._mountWidth, 64, 2600);
     }
 
     _onDriveRemoved(name) {
@@ -1048,7 +1056,7 @@ export default class DynamicIslandExtension extends Extension {
         this._mountTitle.set_text(name || 'Drive');
         this._mountSubtitle.set_text('Terputus');
         this._mountEjectBtn.visible = false;
-        this._showUtilityPopup(VIEW_MOUNT, this._mountBox, this._mountWidth, 48, 1800);
+        this._showUtilityPopup(VIEW_MOUNT, this._mountBox, this._mountWidth, 64, 1800);
     }
 
     _connectSource(source) {
@@ -1655,6 +1663,14 @@ export default class DynamicIslandExtension extends Extension {
         this._micDot.visible = mic;
         this._privacyBox.visible = (camera || mic);
         this._idleLeftSpacer.visible = (camera || mic);
+        const extraWidth = camera && mic ? 24 : 0;
+        if (extraWidth !== this._privacyExtraWidth) {
+            this._privacyExtraWidth = extraWidth;
+            if (this._currentView === VIEW_IDLE) {
+                this._repositionAndResize(this._idleWidth + extraWidth,
+                    this._collapsedHeight, 240, Clutter.AnimationMode.EASE_OUT_CUBIC);
+            }
+        }
     }
 
     _getFormattedTime() {
