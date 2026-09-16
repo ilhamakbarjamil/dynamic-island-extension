@@ -1,0 +1,7 @@
+# Compiled locally by install.sh
+schemas/gschemas.compiled
+# Release archives and local scratch files
+*.zip
+*.log
+.DS_Store
+*~

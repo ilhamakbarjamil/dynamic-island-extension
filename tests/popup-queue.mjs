@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-const source = fs.readFileSync(new URL('../popupQueue.js', import.meta.url), 'utf8');
+const source = fs.readFileSync(new URL('../src/popupQueue.js', import.meta.url), 'utf8');
 const {PopupQueue} = await import(`data:text/javascript,${encodeURIComponent(source)}`);
 let time = 0;
 const queue = new PopupQueue(() => time);

@@ -6,17 +6,17 @@ import Gio from 'gi://Gio';
 import GdkPixbuf from 'gi://GdkPixbuf';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import { MediaWatcher } from './mpris.js';
-import { BatteryWatcher } from './battery.js';
-import { BluetoothWatcher } from './bluetooth.js';
-import { PrivacyWatcher } from './privacy.js';
-import { ScreenRecordWatcher } from './recorder.js';
-import { ControlCenterManager } from './controlCenter.js';
-import { WorkspaceWatcher } from './workspace.js';
-import { MountWatcher } from './mount.js';
-import { DownloadWatcher } from './download.js';
-import { VpnWatcher } from './vpn.js';
-import { PopupQueue } from './popupQueue.js';
+import { MediaWatcher } from './src/mpris.js';
+import { BatteryWatcher } from './src/battery.js';
+import { BluetoothWatcher } from './src/bluetooth.js';
+import { PrivacyWatcher } from './src/privacy.js';
+import { ScreenRecordWatcher } from './src/recorder.js';
+import { ControlCenterManager } from './src/controlCenter.js';
+import { WorkspaceWatcher } from './src/workspace.js';
+import { MountWatcher } from './src/mount.js';
+import { DownloadWatcher } from './src/download.js';
+import { VpnWatcher } from './src/vpn.js';
+import { PopupQueue } from './src/popupQueue.js';
 
 // KUMPULAN STATE EKSKLUSIF
 const VIEW_IDLE = 'idle';
