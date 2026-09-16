@@ -59,7 +59,8 @@ export default class DynamicIslandExtension extends Extension {
         this._vpnWidth = 206;
         this._hudWidth = 196;
         this._chargingWidth = 206;
-        this._bluetoothWidth = 214;
+        this._bluetoothWidth = 250;
+        this._pendingBluetoothEvent = null;
         this._mountWidth = 274;
 
         // Expanded States (Apple Now Playing Squircle 370x160pt)
@@ -219,6 +220,14 @@ export default class DynamicIslandExtension extends Extension {
 
         if (this._notificationQueue.length) {
             this._processQueue();
+            return;
+        }
+
+        if (this._pendingBluetoothEvent) {
+            const event = this._pendingBluetoothEvent;
+            this._pendingBluetoothEvent = null;
+            this._isExpanded = false;
+            this._onBluetoothConnected(event);
             return;
         }
 
@@ -928,8 +937,17 @@ export default class DynamicIslandExtension extends Extension {
     }
 
     _initBluetoothView() {
-        this._bluetoothBox = new St.BoxLayout({ style_class: 'dynamic-island-bt-box', vertical: false, x_expand: true, y_expand: true, y_align: Clutter.ActorAlign.CENTER });
-        this._btIcon = new St.Icon({ icon_size: 14, icon_name: 'audio-headphones-symbolic', style_class: 'dynamic-island-bt-icon' });
+        this._bluetoothBox = new St.BoxLayout({ style_class: 'dynamic-island-bt-box', clip_to_allocation: true, vertical: false, x_expand: true, y_expand: true, y_align: Clutter.ActorAlign.CENTER });
+        const btGlyph = path => new Gio.BytesIcon({bytes: new GLib.Bytes(new TextEncoder().encode(
+            `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="${path}" fill="none" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>`))});
+        this._btGlyphs = {
+            bluetooth: btGlyph('m7 7 10 10-5 4V3l5 4L7 17'),
+            headphones: btGlyph('M4 14v-3a8 8 0 0 1 16 0v3 M4 13h3v7H5a1 1 0 0 1-1-1Z M20 13h-3v7h2a1 1 0 0 0 1-1Z'),
+            mouse: btGlyph('M6 9a6 6 0 0 1 12 0v6a6 6 0 0 1-12 0Z M12 5v4'),
+            keyboard: btGlyph('M3 6h18v12H3Z M7 10h1 M11 10h1 M15 10h1 M7 14h10'),
+            phone: btGlyph('M7 3h10v18H7Z M11 18h2'),
+        };
+        this._btIcon = new St.Icon({ icon_size: 16, gicon: this._btGlyphs.bluetooth, style_class: 'dynamic-island-bt-icon' });
         this._btIconBin = new St.Bin({ style_class: 'dynamic-island-bt-icon-bin', x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER, child: this._btIcon });
         this._btNameLabel = new St.Label({ style_class: 'dynamic-island-bt-name', text: 'AirPods', y_align: Clutter.ActorAlign.CENTER, x_expand: true });
         this._btNameLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
@@ -1175,14 +1193,23 @@ export default class DynamicIslandExtension extends Extension {
         this._restoreBestView();
     }
 
-    _onBluetoothConnected({ name, icon, battery }) {
-        if (this._isControlCenterOpen) return;
+    _onBluetoothConnected({ name, icon = '', battery, kind = 'device', connected = true }) {
+        if (this._isControlCenterOpen) {
+            this._pendingBluetoothEvent = {name, icon, battery, kind, connected};
+            return;
+        }
         if (this._bannerDismissId) GLib.source_remove(this._bannerDismissId);
 
         this._btNameLabel.set_text(name || 'Bluetooth Device');
-        this._btIcon.icon_name = icon || 'audio-headphones-symbolic';
+        const type = kind === 'adapter' ? 'bluetooth' :
+            /mouse|pointing/.test(icon) ? 'mouse' : /keyboard/.test(icon) ? 'keyboard' :
+            /head|audio/.test(icon) ? 'headphones' : /phone/.test(icon) ? 'phone' : 'bluetooth';
+        this._btIcon.gicon = this._btGlyphs[type];
+        this._btIcon.opacity = connected ? 255 : 130;
+        this._btStatusLabel.set_text(kind === 'adapter' ? (connected ? 'Aktif' : 'Nonaktif') :
+            (connected ? 'Terhubung' : 'Terputus'));
 
-        if (battery !== null && battery !== undefined && battery >= 0) {
+        if (connected && Number.isFinite(battery) && battery >= 0) {
             this._btStatusLabel.visible = false;
             this._btPercentLabel.set_text(`${battery}%`);
             this._btPercentLabel.visible = true;
@@ -1196,12 +1223,19 @@ export default class DynamicIslandExtension extends Extension {
             this._btStatusLabel.visible = true;
         }
 
-        this._setView(VIEW_BT);
-        this._repositionAndResize(this._bluetoothWidth, this._collapsedHeight, 320, Clutter.AnimationMode.EASE_OUT_CUBIC);
+        const visible = this._currentView === VIEW_BT;
+        if (!visible) {
+            this._setView(VIEW_BT);
+            this._bluetoothBox.remove_all_transitions();
+            this._bluetoothBox.opacity = 0;
+            this._repositionAndResize(this._bluetoothWidth, this._collapsedHeight, 280, Clutter.AnimationMode.EASE_OUT_CUBIC);
+            this._bluetoothBox.ease({opacity: 255, delay: 100, duration: 180,
+                mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+        }
 
-        this._bannerDismissId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2800, () => {
+        this._bannerDismissId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2200, () => {
             this._bannerDismissId = null;
-            this._restoreBestView();
+            if (this._currentView === VIEW_BT) this._restoreBestView();
             return GLib.SOURCE_REMOVE;
         });
     }

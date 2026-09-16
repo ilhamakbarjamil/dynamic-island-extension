@@ -1,135 +1,75 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
+const unwrap = value => value?.deep_unpack ? value.deep_unpack() : value;
+
 export class BluetoothWatcher {
     constructor(onConnected) {
         this._onConnected = onConnected;
         this._bus = Gio.DBus.system;
-        this._signalId = null;
-        
-        // Anti-spam tracker
-        this._lastDevicePath = null;
-        this._lastConnectTime = 0;
-
-        try {
-            this._signalId = this._bus.signal_subscribe(
-                null,
-                'org.freedesktop.DBus.Properties',
-                'PropertiesChanged',
-                null,
-                null,
-                Gio.DBusSignalFlags.NONE,
-                (_conn, sender, path, _iface, _sig, params) => {
-                    this._handlePropertiesChanged(path, params);
-                }
-            );
-            console.log('[DynamicIsland] BluetoothWatcher aktif (dengan Debounce & Smart Icons).');
-        } catch (e) {
-            console.log('[DynamicIsland] Gagal inisialisasi Bluetooth listener:', e.message);
-        }
+        this._states = new Map();
+        this._devices = new Map();
+        this._generation = new Map();
+        this._cancellable = new Gio.Cancellable();
+        this._signalId = this._bus.signal_subscribe('org.bluez',
+            'org.freedesktop.DBus.Properties', 'PropertiesChanged', null, null,
+            Gio.DBusSignalFlags.NONE, (_c, _s, path, _i, _sig, params) =>
+                this._handlePropertiesChanged(path, params));
     }
 
     _handlePropertiesChanged(path, params) {
-        if (!path || !path.startsWith('/org/bluez')) return;
-
-        try {
-            const [interfaceName, changedProps] = params.deep_unpack();
-            if (interfaceName !== 'org.bluez.Device1') return;
-
-            const unwrap = v => (v && typeof v.deep_unpack === 'function') ? v.deep_unpack() : v;
-
-            if ('Connected' in changedProps) {
-                const isConnected = unwrap(changedProps['Connected']);
-                if (isConnected === true) {
-                    const now = GLib.get_monotonic_time();
-                    // Cegah pop-up berulang jika perangkat yang sama memicu sinyal dalam 5 detik
-                    if (this._lastDevicePath === path && (now - this._lastConnectTime) < 5_000_000) {
-                        return;
-                    }
-                    this._lastDevicePath = path;
-                    this._lastConnectTime = now;
-
-                    // Beri jeda 500ms agar metadata profil audio dan baterai selesai dimuat
-                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
-                        this._queryDevice(path);
-                        return GLib.SOURCE_REMOVE;
-                    });
-                }
-            }
-        } catch (_) {}
+        if (!path?.startsWith('/org/bluez/')) return;
+        const [iface, props] = params.deep_unpack();
+        if (iface === 'org.bluez.Adapter1' && 'Powered' in props) {
+            const powered = unwrap(props.Powered);
+            if (this._states.get(path) === powered) return;
+            this._states.set(path, powered);
+            this._onConnected?.({kind: 'adapter', name: 'Bluetooth', connected: powered});
+        } else if (iface === 'org.bluez.Device1' && 'Connected' in props) {
+            const connected = unwrap(props.Connected);
+            if (this._states.get(path) === connected) return;
+            this._states.set(path, connected);
+            const generation = (this._generation.get(path) ?? 0) + 1;
+            this._generation.set(path, generation);
+            this._queryDevice(path, connected, generation);
+        }
     }
 
-    _queryDevice(path) {
-        try {
-            const res = this._bus.call_sync(
-                'org.bluez',
-                path,
-                'org.freedesktop.DBus.Properties',
-                'GetAll',
-                new GLib.Variant('(s)', ['org.bluez.Device1']),
-                null,
-                Gio.DBusCallFlags.NONE,
-                1000,
-                null
-            );
+    async _getAll(path, iface) {
+        return new Promise(resolve => {
+            this._bus.call('org.bluez', path, 'org.freedesktop.DBus.Properties',
+                'GetAll', new GLib.Variant('(s)', [iface]), null,
+                Gio.DBusCallFlags.NONE, 1000, this._cancellable, (bus, result) => {
+                    try { resolve(bus.call_finish(result).deep_unpack()[0]); }
+                    catch (_) { resolve({}); }
+                });
+        });
+    }
 
-            const [dict] = res.deep_unpack();
-            const unwrap = v => (v && typeof v.deep_unpack === 'function') ? v.deep_unpack() : v;
-
-            const alias = unwrap(dict['Alias']) || unwrap(dict['Name']) || 'Bluetooth Device';
-            const rawIcon = String(unwrap(dict['Icon']) || '').toLowerCase();
-
-            // Pemilihan ikon cerdas sesuai jenis perangkat
-            let icon = 'audio-headphones-symbolic';
-            if (rawIcon.includes('mouse') || rawIcon.includes('pointing')) {
-                icon = 'input-mouse-symbolic';
-            } else if (rawIcon.includes('keyboard')) {
-                icon = 'input-keyboard-symbolic';
-            } else if (rawIcon.includes('gaming') || rawIcon.includes('gamepad') || rawIcon.includes('joystick')) {
-                icon = 'input-gaming-symbolic';
-            } else if (rawIcon.includes('speaker') || rawIcon.includes('audio-card')) {
-                icon = 'audio-speakers-symbolic';
-            } else if (rawIcon.includes('phone')) {
-                icon = 'phone-symbolic';
-            }
-
-            // Ambil persentase baterai jika tersedia
-            let battery = null;
-            try {
-                const bRes = this._bus.call_sync(
-                    'org.bluez',
-                    path,
-                    'org.freedesktop.DBus.Properties',
-                    'Get',
-                    new GLib.Variant('(ss)', ['org.bluez.Battery1', 'Percentage']),
-                    null,
-                    Gio.DBusCallFlags.NONE,
-                    500,
-                    null
-                );
-                const [bVal] = bRes.deep_unpack();
-                const pct = unwrap(bVal);
-                if (pct !== undefined && pct !== null) {
-                    battery = Number(pct);
-                }
-            } catch (_) {}
-
-            this._onConnected?.({
-                name: String(alias),
-                icon,
-                battery,
-            });
-        } catch (e) {
-            console.log('[DynamicIsland] Gagal query detail perangkat BlueZ:', e.message);
-        }
+    async _queryDevice(path, connected, generation) {
+        const [props, batteryProps] = await Promise.all([
+            this._getAll(path, 'org.bluez.Device1'),
+            connected ? this._getAll(path, 'org.bluez.Battery1') : Promise.resolve({}),
+        ]);
+        if (!this._onConnected || this._generation.get(path) !== generation) return;
+        const name = unwrap(props.Alias) || unwrap(props.Name) || this._devices.get(path)?.name || 'Perangkat';
+        const icon = unwrap(props.Icon) || this._devices.get(path)?.icon || 'bluetooth';
+        this._devices.set(path, {name, icon});
+        // Adapter-off takes precedence over the resulting device disconnections.
+        const adapter = path.slice(0, path.lastIndexOf('/'));
+        if (this._states.get(adapter) === false) return;
+        const battery = unwrap(batteryProps.Percentage);
+        this._onConnected({kind: 'device', name, icon, connected,
+            battery: Number.isFinite(battery) ? Math.max(0, Math.min(100, battery)) : null});
     }
 
     destroy() {
-        if (this._signalId) {
-            this._bus.signal_unsubscribe(this._signalId);
-            this._signalId = null;
-        }
         this._onConnected = null;
-        this._bus = null;
+        this._cancellable.cancel();
+        if (this._signalId) this._bus.signal_unsubscribe(this._signalId);
+        this._signalId = null;
+        this._states.clear();
+        this._devices.clear();
+        this._generation.clear();
     }
 }
