@@ -21,6 +21,22 @@ terinspirasi Dynamic Island. Proyek komunitas, tidak berafiliasi dengan Apple.
 - `fuser` untuk deteksi tambahan aplikasi yang membuka perangkat kamera langsung.
 - `gsettings` dan `gdbus` untuk mode tes CLI; Node.js hanya untuk tes pengembangan.
 
+## Tampilan Control Center
+
+### Mode normal
+![Dynamic Island sebelum Control Center dibuka](docs/images/control-center-normal.png)
+
+### Mode expand
+![Control Center terbuka](docs/images/control-center-expanded.png)
+
+## Tampilan Musik
+
+### Mode normal
+![MPRIS dalam mode normal](docs/images/mpris-normal.png)
+
+### Mode expand
+![MPRIS dalam mode expand](docs/images/mpris-expanded.png)
+
 ## Instalasi
 
 Unduh atau clone repositori ini, buka terminal di folder proyek, lalu jalankan:
