@@ -79,7 +79,7 @@ export default class DynamicIslandExtension extends Extension {
 
         // visionOS Control Center
         this._ccExpandedWidth = 382;
-        this._ccExpandedHeight = 366;
+        this._ccExpandedHeight = 450;
 
         // ================= STATE MANAGEMENT =================
         this._currentView = VIEW_IDLE;
@@ -716,7 +716,7 @@ export default class DynamicIslandExtension extends Extension {
     }
 
     _initControlCenterView() {
-        this._controlCenterBox = new St.BoxLayout({ style_class: 'dynamic-island-cc-box', vertical: true, x_expand: true, y_expand: true, reactive: true });
+        this._controlCenterBox = new St.BoxLayout({ style_class: 'dynamic-island-cc-box', clip_to_allocation: true, vertical: true, x_expand: true, y_expand: true, reactive: true });
 
         this._ccHeaderRow = new St.BoxLayout({ style_class: 'dynamic-island-cc-header', vertical: false, x_expand: true, y_align: Clutter.ActorAlign.CENTER });
         this._ccBtnClose = new St.Button({ style_class: 'dynamic-island-cc-close', child: new St.Icon({ icon_name: 'window-close-symbolic', icon_size: 13 }), can_focus: true, y_align: Clutter.ActorAlign.CENTER });
@@ -729,7 +729,7 @@ export default class DynamicIslandExtension extends Extension {
         this._ccHeaderRow.add_child(ccHeaderRightSpacer);
         this._controlCenterBox.add_child(this._ccHeaderRow);
 
-        this._ccTopRow = new St.BoxLayout({ style_class: 'dynamic-island-cc-top-row', vertical: false, x_expand: true });
+        this._ccTopRow = new St.BoxLayout({ style_class: 'dynamic-island-cc-top-row', vertical: true, x_expand: true });
         this._ccClusterLayout = new Clutter.GridLayout({ column_spacing: 10, row_spacing: 10, column_homogeneous: true, row_homogeneous: true });
         this._ccCluster = new St.Widget({ style_class: 'dynamic-island-cc-cluster', layout_manager: this._ccClusterLayout, y_align: Clutter.ActorAlign.FILL });
 
@@ -737,7 +737,6 @@ export default class DynamicIslandExtension extends Extension {
         // Klik Kiri: Menyalakan/Mematikan Wi-Fi
         this._ccBtnWifi.connect('clicked', () => {
             this._cc.toggleWifi();
-            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 350, () => { this._syncControlCenterUI(); return GLib.SOURCE_REMOVE; });
         });
         // Klik Kanan: Langsung membuka pemindai & daftar Wi-Fi sekitar bawaan GNOME
         this._ccBtnWifi.connect('button-press-event', (_actor, event) => {
@@ -750,23 +749,36 @@ export default class DynamicIslandExtension extends Extension {
         });
 
         this._ccBtnBt = new St.Button({ style_class: 'dynamic-island-cc-circle-btn', child: new St.Icon({ icon_name: 'bluetooth-active-symbolic', icon_size: 18 }), can_focus: true });
-        this._ccBtnBt.connect('clicked', () => { this._cc.toggleBluetooth(); GLib.timeout_add(GLib.PRIORITY_DEFAULT, 350, () => { this._syncControlCenterUI(); return GLib.SOURCE_REMOVE; }); });
-
-        this._ccPowerIcon = new St.Icon({ icon_name: 'power-profile-balanced-symbolic', icon_size: 18 });
-        this._ccBtnPower = new St.Button({ style_class: 'dynamic-island-cc-circle-btn', child: this._ccPowerIcon, can_focus: true });
-        this._ccBtnPower.connect('clicked', () => {
-            this._cc.togglePowerMode();
-            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 180, () => { this._syncControlCenterUI(); return GLib.SOURCE_REMOVE; });
-        });
+        this._ccBtnBt.connect('clicked', () => { this._cc.toggleBluetooth(); });
 
         this._ccBtnAirplane = new St.Button({ style_class: 'dynamic-island-cc-circle-btn', child: new St.Icon({ icon_name: 'airplane-mode-symbolic', icon_size: 18 }), can_focus: true });
-        this._ccBtnAirplane.connect('clicked', () => { this._cc.toggleAirplaneMode(); GLib.timeout_add(GLib.PRIORITY_DEFAULT, 350, () => { this._syncControlCenterUI(); return GLib.SOURCE_REMOVE; }); });
+        this._ccBtnAirplane.connect('clicked', () => { this._cc.toggleAirplaneMode(); });
 
+        this._ccWifiIcon = this._ccBtnWifi.child;
+        for (const [button, text] of [[this._ccBtnWifi, 'Wi-Fi'], [this._ccBtnBt, 'Bluetooth'], [this._ccBtnAirplane, 'Pesawat']]) {
+            const icon = button.child;
+            button.set_child(null);
+            const content = new St.BoxLayout({vertical: true, style_class: 'dynamic-island-cc-shortcut-content'});
+            content.add_child(icon);
+            content.add_child(new St.Label({text, style_class: 'dynamic-island-cc-shortcut-label'}));
+            button.set_child(content);
+            button.accessible_name = text;
+        }
         this._ccClusterLayout.attach(this._ccBtnWifi, 0, 0, 1, 1);
         this._ccClusterLayout.attach(this._ccBtnBt, 1, 0, 1, 1);
-        this._ccClusterLayout.attach(this._ccBtnPower, 0, 1, 1, 1);
-        this._ccClusterLayout.attach(this._ccBtnAirplane, 1, 1, 1, 1);
+        this._ccClusterLayout.attach(this._ccBtnAirplane, 2, 0, 1, 1);
         this._ccTopRow.add_child(this._ccCluster);
+        const wifiRow = new St.BoxLayout({style_class: 'dynamic-island-cc-wifi-row', x_expand: true});
+        this._ccWifiLabel = new St.Label({text: 'Wi-Fi', x_expand: true, y_align: Clutter.ActorAlign.CENTER,
+            style_class: 'dynamic-island-cc-status-label'});
+        this._ccWifiLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+        const wifiDetails = new St.Button({style_class: 'dynamic-island-cc-details',
+            label: 'Jaringan  ›', accessible_name: 'Buka daftar jaringan Wi-Fi', can_focus: true});
+        wifiDetails.connect('clicked', () => { this._collapse(); this._cc.openWifiSettings(); });
+        wifiRow.add_child(this._ccWifiLabel);
+        wifiRow.add_child(wifiDetails);
+        this._ccTopRow.add_child(wifiRow);
+
 
         this._ccMediaBox = new St.BoxLayout({ style_class: 'dynamic-island-cc-media', vertical: true, x_expand: true });
         this._ccMediaTopRow = new St.BoxLayout({ style_class: 'dynamic-island-cc-media-row', vertical: false, x_expand: true, y_align: Clutter.ActorAlign.CENTER });
@@ -785,7 +797,7 @@ export default class DynamicIslandExtension extends Extension {
         this._ccMediaTopRow.add_child(this._ccMediaInfo);
         this._ccMediaTopRow.add_child(this._ccPlayBtn);
 
-        this._ccScrubTrack = new St.Widget({ style_class: 'dynamic-island-cc-scrub', x_expand: true, y_align: Clutter.ActorAlign.CENTER, reactive: true });
+        this._ccScrubTrack = new St.Widget({ style_class: 'dynamic-island-cc-scrub', x_expand: true, y_align: Clutter.ActorAlign.CENTER, reactive: false });
         this._ccScrubFill = new St.Widget({ style_class: 'dynamic-island-cc-scrub-fill', x_align: Clutter.ActorAlign.START, y_align: Clutter.ActorAlign.FILL, width: 60 });
         this._ccScrubTrack.add_child(this._ccScrubFill);
 
@@ -794,33 +806,40 @@ export default class DynamicIslandExtension extends Extension {
         this._ccTopRow.add_child(this._ccMediaBox);
         this._controlCenterBox.add_child(this._ccTopRow);
 
-        this._ccBottomGrid = new Clutter.GridLayout({ column_spacing: 10, row_spacing: 10, column_homogeneous: true, row_homogeneous: true });
-        this._ccGridContainer = new St.Widget({ layout_manager: this._ccBottomGrid, x_expand: true });
+        this._ccPowerLabel = new St.Label({text: 'Mode daya · Memuat…', style_class: 'dynamic-island-cc-status-label'});
+        this._controlCenterBox.add_child(this._ccPowerLabel);
+        const powerRow = new St.BoxLayout({style_class: 'dynamic-island-cc-power-row', x_expand: true});
+        this._ccPowerChoices = new Map();
+        for (const [profile, label] of [['power-saver', 'Hemat'], ['balanced', 'Seimbang'], ['performance', 'Performa']]) {
+            const button = new St.Button({label, style_class: 'dynamic-island-cc-profile',
+                can_focus: true, x_expand: true, accessible_name: `Mode daya ${label}`});
+            button.connect('clicked', () => this._cc.setPowerProfile(profile));
+            this._ccPowerChoices.set(profile, button);
+            powerRow.add_child(button);
+        }
+        this._controlCenterBox.add_child(powerRow);
 
-        const makeSqBtn = (iconName, onClick) => {
-            const btn = new St.Button({ style_class: 'dynamic-island-cc-sq-btn', child: new St.Icon({ icon_name: iconName, icon_size: 20 }), can_focus: true, x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER });
-            if (onClick) btn.connect('clicked', onClick);
-            return btn;
-        };
-
-        this._sqBtnNight = makeSqBtn('night-light-symbolic', () => { this._cc.toggleNightLight(); this._syncControlCenterUI(); });
-        this._sqBtnDark = makeSqBtn('weather-clear-night-symbolic', () => { this._cc.toggleDarkMode(); this._syncControlCenterUI(); });
-        this._sqBtnRecord = makeSqBtn('media-record-symbolic', () => { this._collapse(); this._cc.openScreenshot(); });
-        this._sqBtnScreenshot = makeSqBtn('camera-photo-symbolic', () => { this._collapse(); this._cc.openScreenshot(); });
-        this._sqBtnLock = makeSqBtn('system-lock-screen-symbolic', () => { this._collapse(); this._cc.lockScreen(); });
-        this._sqBtnSearch = makeSqBtn('system-search-symbolic', () => { this._collapse(); Main.overview.show(); });
-        this._sqBtnSettings = makeSqBtn('preferences-system-symbolic', () => { this._collapse(); this._cc.openSettings(); });
-        this._sqBtnShutdown = makeSqBtn('system-shutdown-symbolic', () => { this._collapse(); this._cc.openPowerMenu(); });
-
-        this._ccBottomGrid.attach(this._sqBtnNight, 0, 0, 1, 1);
-        this._ccBottomGrid.attach(this._sqBtnDark, 1, 0, 1, 1);
-        this._ccBottomGrid.attach(this._sqBtnRecord, 2, 0, 1, 1);
-        this._ccBottomGrid.attach(this._sqBtnScreenshot, 3, 0, 1, 1);
-        this._ccBottomGrid.attach(this._sqBtnLock, 0, 1, 1, 1);
-        this._ccBottomGrid.attach(this._sqBtnSearch, 1, 1, 1, 1);
-        this._ccBottomGrid.attach(this._sqBtnSettings, 2, 1, 1, 1);
-        this._ccBottomGrid.attach(this._sqBtnShutdown, 3, 1, 1, 1);
-
+        this._ccBottomGrid = new Clutter.GridLayout({column_spacing: 8, row_spacing: 8,
+            column_homogeneous: true, row_homogeneous: true});
+        this._ccGridContainer = new St.Widget({layout_manager: this._ccBottomGrid, x_expand: true});
+        const shortcuts = [
+            ['_sqBtnNight', 'night-light-symbolic', 'Lampu malam', () => this._cc.toggleNightLight()],
+            ['_sqBtnDark', 'weather-clear-night-symbolic', 'Mode gelap', () => this._cc.toggleDarkMode()],
+            ['_sqBtnScreenshot', 'camera-photo-symbolic', 'Tangkapan', () => {this._collapse(); this._cc.openScreenshot();}],
+            ['_sqBtnLock', 'system-lock-screen-symbolic', 'Kunci', () => {this._collapse(); this._cc.lockScreen();}],
+            ['_sqBtnSettings', 'preferences-system-symbolic', 'Pengaturan', () => {this._collapse(); this._cc.openSettings();}],
+            ['_sqBtnShutdown', 'system-shutdown-symbolic', 'Daya', () => {this._collapse(); this._cc.openPowerMenu();}],
+        ];
+        shortcuts.forEach(([key, icon, label, action], i) => {
+            const content = new St.BoxLayout({vertical: true, style_class: 'dynamic-island-cc-shortcut-content'});
+            content.add_child(new St.Icon({icon_name: icon, icon_size: 18}));
+            content.add_child(new St.Label({text: label, style_class: 'dynamic-island-cc-shortcut-label'}));
+            const button = new St.Button({child: content, style_class: 'dynamic-island-cc-sq-btn',
+                can_focus: true, accessible_name: label, x_expand: true});
+            button.connect('clicked', action);
+            this[key] = button;
+            this._ccBottomGrid.attach(button, i % 3, Math.floor(i / 3), 1, 1);
+        });
         this._controlCenterBox.add_child(this._ccGridContainer);
         this._island.add_child(this._controlCenterBox);
         this._allViews.set(VIEW_CONTROL_CENTER, this._controlCenterBox);
@@ -1225,7 +1244,11 @@ export default class DynamicIslandExtension extends Extension {
         this._syncControlCenterUI();
 
         this._setView(VIEW_CONTROL_CENTER);
-        this._repositionAndResize(this._ccExpandedWidth, this._ccExpandedHeight, 340, Clutter.AnimationMode.EASE_OUT_CUBIC);
+        this._controlCenterBox.remove_all_transitions();
+        this._controlCenterBox.opacity = 0;
+        this._repositionAndResize(this._ccExpandedWidth, this._ccExpandedHeight, 320, Clutter.AnimationMode.EASE_OUT_CUBIC);
+        this._controlCenterBox.ease({opacity: 255, delay: 180, duration: 140,
+            mode: Clutter.AnimationMode.EASE_OUT_QUAD});
     }
 
     _collapse() {
@@ -1480,26 +1503,26 @@ export default class DynamicIslandExtension extends Extension {
         const isWifiOn = this._cc.isWifiEnabled();
         if (isWifiOn) {
             this._ccBtnWifi.add_style_class_name('on');
-            this._ccBtnWifi.child.icon_name = 'network-wireless-signal-excellent-symbolic';
+            this._ccWifiIcon.icon_name = 'network-wireless-signal-excellent-symbolic';
         } else {
             this._ccBtnWifi.remove_style_class_name('on');
-            this._ccBtnWifi.child.icon_name = 'network-wireless-disabled-symbolic';
+            this._ccWifiIcon.icon_name = 'network-wireless-disabled-symbolic';
         }
 
         if (this._cc.isBluetoothEnabled()) this._ccBtnBt.add_style_class_name('on'); else this._ccBtnBt.remove_style_class_name('on');
         if (this._cc.isAirplaneMode()) this._ccBtnAirplane.add_style_class_name('on'); else this._ccBtnAirplane.remove_style_class_name('on');
 
-        // Sinkronisasi Power Profile
+        this._ccWifiLabel.set_text(this._cc.isWifiEnabled() ? this._cc.getWifiSsid() : 'Wi-Fi nonaktif');
         const pMode = this._cc.getPowerProfile();
-        if (pMode === 'Performance') {
-            this._ccPowerIcon.icon_name = 'power-profile-performance-symbolic';
-            this._ccBtnPower.add_style_class_name('on');
-        } else if (pMode === 'Power Saver') {
-            this._ccPowerIcon.icon_name = 'power-profile-power-saver-symbolic';
-            this._ccBtnPower.add_style_class_name('on');
-        } else {
-            this._ccPowerIcon.icon_name = 'power-profile-balanced-symbolic';
-            this._ccBtnPower.remove_style_class_name('on');
+        const names = {'Performance': 'Performa', 'Power Saver': 'Hemat daya', 'Balanced': 'Seimbang'};
+        this._ccPowerLabel.set_text(this._cc.getPowerError() || `Mode daya · ${names[pMode] || pMode}`);
+        const active = {'Performance': 'performance', 'Power Saver': 'power-saver', 'Balanced': 'balanced'}[pMode];
+        for (const [profile, button] of this._ccPowerChoices) {
+            button.reactive = this._cc.getPowerProfiles().includes(profile) && !this._cc.isPowerPending();
+            button.can_focus = button.reactive;
+            button.opacity = button.reactive ? 255 : 90;
+            if (profile === active) button.add_style_class_name('on');
+            else button.remove_style_class_name('on');
         }
 
         if (this._currentMedia && this._currentMedia.status !== 'Stopped') {

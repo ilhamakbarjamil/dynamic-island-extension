@@ -577,159 +577,62 @@
     background-color: #d70015;
 }
 
-/* ================= 12. VISIONOS GLASS STYLE CONTROL CENTER ================= */
+/* ================= 12. CONTROL CENTER ================= */
 .dynamic-island-cc-box {
-    padding: 22px 20px 22px 20px;
-    spacing: 14px;
-    /* Dihapus: background-color dan border, karena sudah digantikan oleh .dynamic-island-cc-expanded di pill utama */
-    background-color: transparent; 
-    border: none;
-}
-
-/* Header & Tombol Close */
-.dynamic-island-cc-header {
-    min-height: 36px;
-    margin-bottom: 4px;
-}
-
-.dynamic-island-cc-close {
-    width: 34px;
-    height: 34px;
-    border-radius: 17px;
-    background-color: rgba(255, 255, 255, 0.16);
-    color: #ffffff;
-    padding: 0;
-    transition: all 150ms ease;
-}
-
-.dynamic-island-cc-close:hover {
-    background-color: rgba(255, 255, 255, 0.28);
-}
-
-.dynamic-island-cc-title {
-    color: #ffffff;
-    font-size: 1.15em;
-    font-weight: 700;
-    letter-spacing: 0.1px;
-}
-
-/* Baris Atas: Cluster Koneksi + Media */
-.dynamic-island-cc-top-row {
-    spacing: 12px;
-}
-
-/* Cluster 2x2 Lingkaran */
-.dynamic-island-cc-cluster {
-    background-color: rgba(255, 255, 255, 0.10);
-    border-radius: 28px;
-    padding: 10px;
-}
-
-.dynamic-island-cc-circle-btn {
-    width: 48px;
-    height: 48px;
-    border-radius: 24px; /* Fix ke px agar membulat presisi */
-    background-color: rgba(255, 255, 255, 0.14);
-    color: rgba(255, 255, 255, 0.85);
-    padding: 0;
-    border: none;
-    transition: all 180ms ease;
-}
-
-.dynamic-island-cc-circle-btn StIcon {
-    icon-size: 20px;
-}
-
-.dynamic-island-cc-circle-btn:hover {
-    background-color: rgba(255, 255, 255, 0.24);
-}
-
-.dynamic-island-cc-circle-btn.on {
-    background-color: #0a84ff !important;
-    color: #ffffff !important;
-}
-
-/* Kartu Now Playing Kanan */
-.dynamic-island-cc-media {
-    background-color: rgba(255, 255, 255, 0.10);
-    border-radius: 28px;
-    padding: 12px 14px;
+    padding: 16px 20px;
     spacing: 10px;
 }
-
-.dynamic-island-cc-media-row {
-    spacing: 12px;
+.dynamic-island-cc-header { min-height: 30px; }
+.dynamic-island-cc-close {
+    width: 28px; height: 28px; padding: 0;
+    border-radius: 14px; color: #f5f5f7;
+    background-color: rgba(255,255,255,0.10);
 }
-
-.dynamic-island-cc-media-art {
-    width: 52px;
-    height: 52px;
-    border-radius: 12px;
+.dynamic-island-cc-title { color: #f5f5f7; font-size: 15px; font-weight: 600; }
+.dynamic-island-cc-top-row { spacing: 8px; }
+.dynamic-island-cc-cluster { padding: 0; }
+.dynamic-island-cc-circle-btn {
+    width: 104px; height: 56px; padding: 0;
+    border-radius: 18px; color: #f5f5f7;
     background-color: #1c1c1e;
 }
-
-.dynamic-island-cc-media-info {
-    spacing: 2px;
+.dynamic-island-cc-shortcut-content { spacing: 5px; }
+.dynamic-island-cc-shortcut-label { font-size: 10px; text-align: center; }
+.dynamic-island-cc-circle-btn.on { background-color: #0a84ff; }
+.dynamic-island-cc-wifi-row { spacing: 8px; }
+.dynamic-island-cc-status-label { color: #a1a1a6; font-size: 11px; }
+.dynamic-island-cc-details { padding: 5px 8px; color: #64d2ff; font-size: 11px; border-radius: 8px; }
+.dynamic-island-cc-media {
+    padding: 10px 12px; spacing: 8px;
+    background-color: #1c1c1e; border-radius: 18px;
 }
-
-.dynamic-island-cc-media-title {
-    color: #ffffff;
-    font-size: 0.94em;
-    font-weight: 700;
-}
-
-.dynamic-island-cc-media-artist {
-    color: rgba(255, 255, 255, 0.68);
-    font-size: 0.8em;
-    font-weight: 500;
-}
-
+.dynamic-island-cc-media-row { spacing: 10px; }
+.dynamic-island-cc-media-art { width: 38px; height: 38px; border-radius: 9px; }
+.dynamic-island-cc-media-info { spacing: 3px; min-width: 0; }
+.dynamic-island-cc-media-title { color: #f5f5f7; font-size: 12px; font-weight: 600; }
+.dynamic-island-cc-media-artist { color: #a1a1a6; font-size: 11px; }
 .dynamic-island-cc-play-btn {
-    width: 38px;
-    height: 38px;
-    border-radius: 19px; /* Bulat sempurna */
-    background-color: rgba(255, 255, 255, 0.16);
-    color: #ffffff;
-    padding: 0;
-    transition: all 150ms ease;
+    width: 30px; height: 30px; padding: 0; border-radius: 15px;
+    color: white; background-color: rgba(255,255,255,0.10);
 }
-
-.dynamic-island-cc-play-btn:hover {
-    background-color: rgba(255, 255, 255, 0.26);
+.dynamic-island-cc-scrub { height: 3px; border-radius: 2px; background-color: #48484a; }
+.dynamic-island-cc-scrub-fill { height: 3px; border-radius: 2px; background-color: #f5f5f7; }
+.dynamic-island-cc-power-row { spacing: 6px; }
+.dynamic-island-cc-profile {
+    padding: 8px 10px; border-radius: 12px; font-size: 11px;
+    color: #a1a1a6; background-color: #1c1c1e;
 }
-
-/* Kapsul Tebal Scrubber / Progress Bar */
-.dynamic-island-cc-scrub {
-    height: 34px; /* Disamakan dengan HTML */
-    border-radius: 17px;
-    background-color: rgba(255, 255, 255, 0.14);
-}
-
-.dynamic-island-cc-scrub-fill {
-    height: 34px;
-    border-radius: 17px;
-    background-color: rgba(255, 255, 255, 0.55);
-}
-
-/* Bottom Grid Tombol Kotak / Ubin 20px Radius */
+.dynamic-island-cc-profile.on { background-color: #3a3a3c; color: white; }
 .dynamic-island-cc-sq-btn {
-    width: 54px;
-    height: 54px;
-    border-radius: 20px;
-    background-color: rgba(255, 255, 255, 0.10);
-    color: #ffffff;
-    padding: 0;
-    border: none;
-    transition: all 180ms ease;
+    height: 52px; padding: 0; border-radius: 16px;
+    background-color: #1c1c1e; color: #f5f5f7;
 }
-
-.dynamic-island-cc-sq-btn:hover {
-    background-color: rgba(255, 255, 255, 0.18);
-}
-
-.dynamic-island-cc-sq-btn.on {
-    background-color: #0a84ff !important;
-    color: #ffffff !important;
+.dynamic-island-cc-sq-btn.on { background-color: #0a84ff; }
+.dynamic-island-cc-close:hover, .dynamic-island-cc-play-btn:hover,
+.dynamic-island-cc-sq-btn:hover, .dynamic-island-cc-circle-btn:hover,
+.dynamic-island-cc-profile:hover, .dynamic-island-cc-details:hover,
+.dynamic-island-cc-sq-btn:focus, .dynamic-island-cc-profile:focus {
+    background-color: #48484a;
 }
 
 /* ================= 13. WORKSPACE SWITCHER (IOS STYLE) ================= */

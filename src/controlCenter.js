@@ -6,6 +6,18 @@ import * as SystemActions from 'resource:///org/gnome/shell/misc/systemActions.j
 export class ControlCenterManager {
     constructor(onUpdate) {
         this._onUpdate = onUpdate;
+        this._timers = new Set();
+        this._powerState = {profile: null, profiles: []};
+        this._powerPending = false;
+        this._cancellable = new Gio.Cancellable();
+        this._refreshPowerProfiles();
+        this._powerSignal = Gio.DBus.system.signal_subscribe(null,
+            'org.freedesktop.DBus.Properties', 'PropertiesChanged', null, null,
+            Gio.DBusSignalFlags.NONE, (_c, _s, _p, _i, _n, params) => {
+                const [iface] = params.deep_unpack();
+                if (iface === 'net.hadess.PowerProfiles' || iface === 'org.freedesktop.UPower.PowerProfiles')
+                    this._refreshPowerProfiles();
+            });
 
         // Settings Schema
         this._interfaceSettings = new Gio.Settings({ schema_id: 'org.gnome.desktop.interface' });
@@ -33,6 +45,7 @@ export class ControlCenterManager {
             const netClient = qs?._network?._client;
             if (netClient) {
                 this._wifiSig = netClient.connect('notify::wireless-enabled', () => this._notify());
+                this._wifiConnectionSig = netClient.connect('notify::active-connections', () => this._notify());
             }
 
             // Pantau status Airplane Mode bawaan GNOME Rfkill
@@ -51,22 +64,6 @@ export class ControlCenterManager {
             if (btToggle && typeof btToggle.checked === 'boolean') {
                 return btToggle.checked;
             }
-        } catch (_) {}
-
-        try {
-            const res = Gio.DBus.system.call_sync(
-                'org.bluez',
-                '/org/bluez/hci0',
-                'org.freedesktop.DBus.Properties',
-                'Get',
-                new GLib.Variant('(ss)', ['org.bluez.Adapter1', 'Powered']),
-                null,
-                Gio.DBusCallFlags.NONE,
-                150,
-                null
-            );
-            const [val] = res.deep_unpack();
-            return Boolean(val?.deep_unpack?.() ?? val);
         } catch (_) {}
 
         return false;
@@ -91,10 +88,7 @@ export class ControlCenterManager {
             GLib.spawn_command_line_async('bluetoothctl power off');
         }
 
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-            this._notify();
-            return GLib.SOURCE_REMOVE;
-        });
+        this._refreshSoon();
 
         return targetState;
     }
@@ -111,22 +105,6 @@ export class ControlCenterManager {
         } catch (_) {}
 
         // 2. Cek via D-Bus org.gnome.SettingsDaemon.Rfkill
-        try {
-            const res = Gio.DBus.session.call_sync(
-                'org.gnome.SettingsDaemon.Rfkill',
-                '/org/gnome/SettingsDaemon/Rfkill',
-                'org.freedesktop.DBus.Properties',
-                'Get',
-                new GLib.Variant('(ss)', ['org.gnome.SettingsDaemon.Rfkill', 'AirplaneMode']),
-                null,
-                Gio.DBusCallFlags.NONE,
-                150,
-                null
-            );
-            const [val] = res.deep_unpack();
-            return Boolean(val?.deep_unpack?.() ?? val);
-        } catch (_) {}
-
         return false;
     }
 
@@ -165,10 +143,7 @@ export class ControlCenterManager {
             GLib.spawn_command_line_async(`rfkill ${targetState ? 'block' : 'unblock'} all`);
         }
 
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-            this._notify();
-            return GLib.SOURCE_REMOVE;
-        });
+        this._refreshSoon();
 
         return targetState;
     }
@@ -215,7 +190,7 @@ export class ControlCenterManager {
     isWifiEnabled() {
         try {
             const nm = Main.panel.statusArea.quickSettings?._network?._client;
-            return nm ? nm.wireless_enabled : true;
+            return Boolean(nm?.wireless_enabled);
         } catch (_) {
             return true;
         }
@@ -226,7 +201,7 @@ export class ControlCenterManager {
             const activeConn = Main.panel.statusArea.quickSettings?._network?._client?.active_connections;
             if (activeConn) {
                 for (let conn of activeConn) {
-                    if (conn.type === '802-11-wireless') return conn.id || 'Wi-Fi';
+                    if ((conn.get_connection_type?.() || conn.type) === '802-11-wireless') return conn.get_id?.() || conn.id || 'Wi-Fi';
                 }
             }
         } catch (_) {}
@@ -239,16 +214,13 @@ export class ControlCenterManager {
             if (nm) {
                 nm.wireless_enabled = !nm.wireless_enabled;
             } else {
-                GLib.spawn_command_line_async('nmcli radio wifi toggle');
+                GLib.spawn_command_line_async(`nmcli radio wifi ${this.isWifiEnabled() ? 'off' : 'on'}`);
             }
         } catch (_) {
-            GLib.spawn_command_line_async('nmcli radio wifi toggle');
+            GLib.spawn_command_line_async(`nmcli radio wifi ${this.isWifiEnabled() ? 'off' : 'on'}`);
         }
 
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-            this._notify();
-            return GLib.SOURCE_REMOVE;
-        });
+        this._refreshSoon();
     }
 
     openWifiSettings() {
@@ -256,51 +228,61 @@ export class ControlCenterManager {
     }
 
     // ================= 6. POWER PROFILE =================
-    getPowerProfile() {
-        try {
-            const res = Gio.DBus.system.call_sync(
-                'net.hadess.PowerProfiles',
-                '/net/hadess/PowerProfiles',
-                'org.freedesktop.DBus.Properties',
-                'Get',
-                new GLib.Variant('(ss)', ['net.hadess.PowerProfiles', 'ActiveProfile']),
-                null,
-                Gio.DBusCallFlags.NONE,
-                200,
-                null
-            );
-            const [val] = res.deep_unpack();
-            const profile = String(val?.deep_unpack?.() ?? val);
-            if (profile.includes('performance')) return 'Performance';
-            if (profile.includes('power-saver')) return 'Power Saver';
-            return 'Balanced';
-        } catch (_) {
-            return 'Balanced';
-        }
+    _refreshPowerProfiles(index = 0) {
+        const services = [
+            ['org.freedesktop.UPower.PowerProfiles', '/org/freedesktop/UPower/PowerProfiles'],
+            ['net.hadess.PowerProfiles', '/net/hadess/PowerProfiles'],
+        ];
+        const [name, path] = services[index];
+        Gio.DBus.system.call(name, path, 'org.freedesktop.DBus.Properties', 'GetAll',
+            new GLib.Variant('(s)', [name]), null, Gio.DBusCallFlags.NONE, 1000,
+            this._cancellable, (bus, result) => {
+                try {
+                    const [props] = bus.call_finish(result).deep_unpack();
+                    if (this._cancellable.is_cancelled()) return;
+                    const unpack = v => v?.deep_unpack ? v.deep_unpack() : v;
+                    const profile = unpack(props.ActiveProfile);
+                    if (!profile) throw new Error('Missing power profile');
+                    this._powerService = {name, path};
+                    this._powerState = {profile,
+                        profiles: (unpack(props.Profiles) || []).map(p => unpack(p.Profile))};
+                    this._powerError = null;
+                    this._notify();
+                } catch (_) {
+                    if (this._cancellable.is_cancelled()) return;
+                    if (index === 0) this._refreshPowerProfiles(1);
+                    else {
+                        this._powerState = {profile: null, profiles: []};
+                        this._notify();
+                    }
+                }
+            });
     }
 
-    togglePowerMode() {
-        const current = this.getPowerProfile();
-        const next = current === 'Balanced' ? 'performance' : (current === 'Performance' ? 'power-saver' : 'balanced');
-        try {
-            Gio.DBus.system.call_sync(
-                'net.hadess.PowerProfiles',
-                '/net/hadess/PowerProfiles',
-                'org.freedesktop.DBus.Properties',
-                'Set',
-                new GLib.Variant('(ssv)', ['net.hadess.PowerProfiles', 'ActiveProfile', new GLib.Variant('s', next)]),
-                null,
-                Gio.DBusCallFlags.NONE,
-                300,
-                null
-            );
-        } catch (_) {}
+    getPowerProfile() {
+        return {'performance': 'Performance', 'balanced': 'Balanced', 'power-saver': 'Power Saver'}[this._powerState.profile] || 'Tidak tersedia';
+    }
 
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 200, () => {
-            this._notify();
-            return GLib.SOURCE_REMOVE;
-        });
-        return next;
+    getPowerProfiles() { return this._powerState.profiles; }
+    getPowerError() { return this._powerError; }
+    isPowerPending() { return this._powerPending; }
+
+    setPowerProfile(profile) {
+        if (this._powerPending || !this._powerService || !this._powerState.profiles.includes(profile)) return;
+        this._powerPending = true;
+        this._powerError = null;
+        this._notify();
+        const {name, path} = this._powerService;
+        Gio.DBus.system.call(name, path, 'org.freedesktop.DBus.Properties', 'Set',
+            new GLib.Variant('(ssv)', [name, 'ActiveProfile', new GLib.Variant('s', profile)]),
+            null, Gio.DBusCallFlags.NONE, 2000, this._cancellable, (bus, result) => {
+                try { bus.call_finish(result); }
+                catch (_) { this._powerError = 'Gagal mengganti mode daya'; }
+                if (this._cancellable.is_cancelled()) return;
+                this._powerPending = false;
+                this._notify();
+                if (!this._powerError) this._refreshPowerProfiles();
+            });
     }
 
     // ================= 7. SHORTCUT SISTEM =================
@@ -326,6 +308,15 @@ export class ControlCenterManager {
         } catch (_) {}
     }
 
+    _refreshSoon() {
+        const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
+            this._timers.delete(id);
+            this._notify();
+            return GLib.SOURCE_REMOVE;
+        });
+        this._timers.add(id);
+    }
+
     _notify() {
         try {
             this._onUpdate?.();
@@ -333,6 +324,10 @@ export class ControlCenterManager {
     }
 
     destroy() {
+        for (const id of this._timers) GLib.source_remove(id);
+        this._timers.clear();
+        this._cancellable.cancel();
+        if (this._powerSignal) Gio.DBus.system.signal_unsubscribe(this._powerSignal);
         if (this._darkSig) this._interfaceSettings.disconnect(this._darkSig);
         if (this._nightSig) this._colorSettings.disconnect(this._nightSig);
 
@@ -343,6 +338,7 @@ export class ControlCenterManager {
 
             const netClient = qs?._network?._client;
             if (netClient && this._wifiSig) netClient.disconnect(this._wifiSig);
+            if (netClient && this._wifiConnectionSig) netClient.disconnect(this._wifiConnectionSig);
 
             const rfkillToggle = qs?._rfkill?._toggle || qs?._rfkill?.quickSettingsItems?.[0];
             if (rfkillToggle && this._rfkillSig) rfkillToggle.disconnect(this._rfkillSig);
