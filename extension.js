@@ -52,8 +52,8 @@ export default class DynamicIslandExtension extends Extension {
         this._collapsedHeight = 30;
         this._compactMediaWidth = 174;
         this._compactRecordWidth = 154;
-        this._compactDlWidth = 280;
-        this._dlHeight = 46;
+        this._compactDlWidth = 210;
+        this._dlHeight = 30;
 
         this._wsWidth = 186;
         this._vpnWidth = 206;
@@ -99,6 +99,8 @@ export default class DynamicIslandExtension extends Extension {
         this._recordPulseId = null;
         this._pauseTimeoutId = null;
         this._dlCompletedTimeoutId = null;
+        this._dlCollapseTimeoutId = null;
+        this._dlExpanded = false;
         this._isDraggingSeek = false;
         this._coverCache = new Map();
 
@@ -211,6 +213,10 @@ export default class DynamicIslandExtension extends Extension {
         if (this._recorder?.isRecording) {
             targetView = VIEW_COMPACT_RECORD;
             targetWidth = this._compactRecordWidth;
+        } else if (this._currentDownload) {
+            targetView = VIEW_COMPACT_DL;
+            targetWidth = this._compactDlWidth;
+            targetHeight = this._dlHeight;
         } else if (this._mediaActive && this._currentMedia) {
             targetView = VIEW_COMPACT_MEDIA;
             targetWidth = this._compactMediaWidth;
@@ -357,170 +363,114 @@ export default class DynamicIslandExtension extends Extension {
     }
 
     _initCompactDownloadView() {
-        this._dlBox = new St.BoxLayout({
-            style_class: 'dynamic-island-dl-box',
-            vertical: false,
-            x_expand: true,
-            y_expand: true,
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-
-        this._dlIconBin = new St.Bin({
-            style_class: 'dynamic-island-dl-icon-bin',
-            x_align: Clutter.ActorAlign.CENTER,
-            y_align: Clutter.ActorAlign.CENTER,
-            child: new St.Icon({
-                icon_name: 'folder-download-symbolic',
-                icon_size: 15,
-                style_class: 'dynamic-island-dl-icon',
-            }),
-        });
-
-        this._dlTextCol = new St.BoxLayout({
-            style_class: 'dynamic-island-dl-text-col',
-            vertical: true,
-            x_expand: true,
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        this._dlStatusLabel = new St.Label({
-            style_class: 'dynamic-island-dl-status',
-            text: 'DOWNLOADING',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        this._dlNameLabel = new St.Label({
-            style_class: 'dynamic-island-dl-name',
-            text: 'File',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        this._dlNameLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-        this._dlTextCol.add_child(this._dlStatusLabel);
-        this._dlTextCol.add_child(this._dlNameLabel);
-
-        this._dlProgressBox = new St.BoxLayout({
-            style_class: 'dynamic-island-dl-progress-box',
-            vertical: false,
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        this._dlTrackBin = new St.Bin({
-            style_class: 'dynamic-island-dl-track',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        this._dlFill = new St.Widget({
-            style_class: 'dynamic-island-dl-fill',
-            x_align: Clutter.ActorAlign.START,
-            y_align: Clutter.ActorAlign.FILL,
-            width: 8,
-        });
-        this._dlTrackBin.set_child(this._dlFill);
-
-        this._dlPercentLabel = new St.Label({
-            style_class: 'dynamic-island-dl-percent',
-            text: '0%',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        this._dlProgressBox.add_child(this._dlTrackBin);
-        this._dlProgressBox.add_child(this._dlPercentLabel);
-
-        this._dlCompleteBin = new St.Bin({
-            style_class: 'dynamic-island-dl-complete-bin',
-            x_align: Clutter.ActorAlign.CENTER,
-            y_align: Clutter.ActorAlign.CENTER,
-            visible: false,
-            child: new St.Icon({
-                icon_name: 'object-select-symbolic',
-                icon_size: 14,
-                style_class: 'dynamic-island-dl-checkmark',
-            }),
-        });
-
-        this._dlBox.add_child(this._dlIconBin);
-        this._dlBox.add_child(this._dlTextCol);
-        this._dlBox.add_child(this._dlProgressBox);
-        this._dlBox.add_child(this._dlCompleteBin);
-
+        // Rounded monoline glyphs, independent of the desktop icon theme.
+        const glyph = path => new Gio.BytesIcon({bytes: new GLib.Bytes(
+            new TextEncoder().encode(`<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="${path}" fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`))});
+        this._dlArrowIcon = glyph('M12 4v12 M7.5 11.5 12 16l4.5-4.5 M5 18v2h14v-2');
+        this._dlDoneIcon = glyph('m5.5 12 4.5 4.5 8.5-9');
+        this._dlIcon = new St.Icon({gicon: this._dlArrowIcon, icon_size: 18,
+            style_class: 'dynamic-island-dl-icon', y_align: Clutter.ActorAlign.CENTER});
+        this._dlBox = new St.BoxLayout({style_class: 'dynamic-island-dl-box',
+            x_expand: true, y_expand: true, y_align: Clutter.ActorAlign.CENTER});
+        this._dlContentCol = new St.BoxLayout({vertical: true, x_expand: true,
+            style_class: 'dynamic-island-dl-content-col', y_align: Clutter.ActorAlign.CENTER});
+        const row = new St.BoxLayout({x_expand: true, style_class: 'dynamic-island-dl-top-row'});
+        this._dlStatusLabel = new St.Label({text: 'Mengunduh', x_expand: true,
+            style_class: 'dynamic-island-dl-status', y_align: Clutter.ActorAlign.CENTER});
+        this._dlPercentLabel = new St.Label({text: '',
+            style_class: 'dynamic-island-dl-percent', y_align: Clutter.ActorAlign.CENTER});
+        this._dlNameLabel = new St.Label({text: '', visible: false,
+            style_class: 'dynamic-island-dl-name'});
+        this._dlNameLabel.clutter_text.ellipsize = Pango.EllipsizeMode.MIDDLE;
+        row.add_child(this._dlStatusLabel);
+        row.add_child(this._dlPercentLabel);
+        this._dlContentCol.add_child(row);
+        this._dlContentCol.add_child(this._dlNameLabel);
+        this._dlBox.add_child(this._dlIcon);
+        this._dlBox.add_child(this._dlContentCol);
         this._island.add_child(this._dlBox);
         this._allViews.set(VIEW_COMPACT_DL, this._dlBox);
     }
 
-    _showDownloadComplete(fileName) {
-        if (this._dlCompletedTimeoutId) {
-            GLib.source_remove(this._dlCompletedTimeoutId);
-            this._dlCompletedTimeoutId = null;
-        }
+    _canShowDownload() {
+        return !this._isExpanded && !this._isControlCenterOpen &&
+            [VIEW_IDLE, VIEW_COMPACT_MEDIA, VIEW_COMPACT_DL].includes(this._currentView);
+    }
 
-        this._dlStatusLabel.set_text('Downloaded');
-        this._dlNameLabel.set_text(fileName || 'File');
-        this._dlProgressBox.visible = false;
-        this._dlCompleteBin.visible = true;
+    _setDownloadExpanded(expanded) {
+        this._dlExpanded = expanded;
+        this._compactDlWidth = expanded ? 300 : 210;
+        this._dlHeight = expanded ? 64 : this._collapsedHeight;
+        this._dlNameLabel.visible = expanded;
+        this._dlBox.style_class = expanded ? 'dynamic-island-dl-box expanded' : 'dynamic-island-dl-box';
+        if (this._currentView === VIEW_COMPACT_DL)
+            this._repositionAndResize(this._compactDlWidth, this._dlHeight, 280);
+    }
 
-        this._setView(VIEW_COMPACT_DL);
-        this._repositionAndResize(this._compactDlWidth, this._dlHeight, 320, Clutter.AnimationMode.EASE_OUT_CUBIC);
-
-        this._dlCompletedTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 3500, () => {
-            this._dlCompletedTimeoutId = null;
-            this._currentDownload = null;
-            this._dlProgressBox.visible = true;
-            this._dlCompleteBin.visible = false;
-            this._restoreBestView();
-            return GLib.SOURCE_REMOVE;
-        });
+    _cancelDownloadCollapse() {
+        if (this._dlCollapseTimeoutId) GLib.source_remove(this._dlCollapseTimeoutId);
+        this._dlCollapseTimeoutId = null;
     }
 
     _onDownloadProgress(data) {
         if (!data) {
-            if (this._currentDownload && !this._dlCompletedTimeoutId) {
-                const lastFile = this._currentDownload.filename || this._currentDownload.name || 'File';
-                this._showDownloadComplete(lastFile);
-            } else if (!this._dlCompletedTimeoutId) {
-                if (this._currentView === VIEW_COMPACT_DL) this._restoreBestView();
-            }
+            if (this._dlCompletedTimeoutId) return;
+            this._cancelDownloadCollapse();
+            this._currentDownload = null;
+            this._setDownloadExpanded(false);
+            if (this._currentView === VIEW_COMPACT_DL) this._restoreBestView();
             return;
         }
-
+        const starting = !this._currentDownload || this._currentDownload.isCompleted;
         if (this._dlCompletedTimeoutId) {
             GLib.source_remove(this._dlCompletedTimeoutId);
             this._dlCompletedTimeoutId = null;
         }
-
         this._currentDownload = data;
-
-        const fileName = data.filename || data.name || data.title || 'File';
-        let rawPct = 0;
-        if (data.percentage !== undefined && data.percentage !== null) {
-            rawPct = data.percentage;
-        } else if (data.progress !== undefined && data.progress !== null) {
-            rawPct = data.progress <= 1 ? data.progress * 100 : data.progress;
-        } else if (data.pct !== undefined) {
-            rawPct = data.pct;
-        }
-
-        const pct = Math.min(100, Math.max(0, Math.round(rawPct)));
-        const isComplete = data.isCompleted || data.complete || data.done || data.status === 'completed' || pct >= 100;
-
-        if (isComplete) {
-            this._showDownloadComplete(fileName);
+        if (data.isCompleted) {
+            this._showDownloadComplete(data.filename);
             return;
         }
-
-        this._dlStatusLabel.set_text('Downloading');
-        this._dlNameLabel.set_text(fileName);
-        this._dlPercentLabel.set_text(`${pct}%`);
-        this._dlProgressBox.visible = true;
-        this._dlCompleteBin.visible = false;
-
-        const trackW = 54;
-        this._dlFill.width = Math.max(4, Math.round((pct / 100) * trackW));
-
-        if (!this._isExpanded && !this._isControlCenterOpen &&
-            this._currentView !== VIEW_WORKSPACE &&
-            this._currentView !== VIEW_MOUNT &&
-            this._currentView !== VIEW_VPN &&
-            this._currentView !== VIEW_HUD &&
-            this._currentView !== VIEW_CHARGING &&
-            this._currentView !== VIEW_BT) {
-            this._setView(VIEW_COMPACT_DL);
-            this._repositionAndResize(this._compactDlWidth, this._dlHeight, 320, Clutter.AnimationMode.EASE_OUT_CUBIC);
+        this._dlStatusLabel.set_text(data.waiting ? 'Menunggu' :
+            data.activeCount > 1 ? `${data.activeCount} unduhan` : 'Mengunduh');
+        this._dlNameLabel.set_text(data.filename || 'File');
+        this._dlPercentLabel.set_text(Number.isFinite(data.percentage)
+            ? `${Math.floor(Math.min(100, Math.max(0, data.percentage)))}%`
+            : Number.isFinite(data.size) ? GLib.format_size(data.size) : '');
+        this._dlIcon.gicon = this._dlArrowIcon;
+        if (starting) {
+            this._cancelDownloadCollapse();
+            this._setDownloadExpanded(true);
+            // Progress callbacks must never restart this timer.
+            this._dlCollapseTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2200, () => {
+                this._dlCollapseTimeoutId = null;
+                this._setDownloadExpanded(false);
+                return GLib.SOURCE_REMOVE;
+            });
         }
+        if (this._canShowDownload() && this._currentView !== VIEW_COMPACT_DL) {
+            this._setView(VIEW_COMPACT_DL);
+            this._repositionAndResize(this._compactDlWidth, this._dlHeight);
+        }
+    }
+
+    _showDownloadComplete(fileName) {
+        this._cancelDownloadCollapse();
+        this._dlStatusLabel.set_text('Selesai');
+        this._dlNameLabel.set_text(fileName || 'File');
+        this._dlPercentLabel.set_text('');
+        this._dlIcon.gicon = this._dlDoneIcon;
+        this._setDownloadExpanded(false);
+        if (this._canShowDownload()) {
+            this._setView(VIEW_COMPACT_DL);
+            this._repositionAndResize(this._compactDlWidth, this._dlHeight);
+        }
+        this._dlCompletedTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2000, () => {
+            this._dlCompletedTimeoutId = null;
+            this._currentDownload = null;
+            if (this._currentView === VIEW_COMPACT_DL) this._restoreBestView();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     _initCompactRecordView() {
@@ -1670,6 +1620,7 @@ export default class DynamicIslandExtension extends Extension {
         if (this._media) this._media.destroy();
         if (this._wsWatcher) this._wsWatcher.destroy();
         if (this._mountWatcher) this._mountWatcher.destroy();
+        this._cancelDownloadCollapse();
         if (this._dlWatcher) this._dlWatcher.destroy();
         if (this._vpnWatcher) this._vpnWatcher.destroy();
         if (this._island) this._island.destroy();

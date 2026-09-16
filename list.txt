@@ -1,6 +1,0 @@
-fitur yang perlu di perbaiki:
-1. mpris ketika play di youtube dan spotify, misal saya buka youtube dulu kemudian spotify, yang ke baca itu yang di youtube, yang spotify ketika saya play itu tidak muncul di dynamic
-2. mpris mati di tengah tengah lagu, apakah memang begitu di iphone ?
-
-yang perlu di revisi:
-2. animasi dari mode normal ke expand itu tidak smooth, itu yang perlu di perbaiki

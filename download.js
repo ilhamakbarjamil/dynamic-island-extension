@@ -1,49 +1,31 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
+// Filesystem fallback: temporary files expose bytes, never the expected total.
+// Do not invent a percentage or treat deletion/cancellation as completion.
 export class DownloadWatcher {
     constructor(onProgress) {
         this._onProgress = onProgress;
-        this._monitor = null;
-        this._monitorId = null;
-        this._pollTimerId = null;
-
-        this._activeDownload = null;
-        this._downloadDir = this._getDownloadDir();
-
+        this._downloads = new Map();
+        this._downloadDir = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD) ||
+            GLib.build_filenamev([GLib.get_home_dir(), 'Downloads']);
         this._setup();
-    }
-
-    _getDownloadDir() {
-        const xdg = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD);
-        if (xdg && GLib.file_test(xdg, GLib.FileTest.IS_DIR)) {
-            return xdg;
-        }
-        return GLib.build_filenamev([GLib.get_home_dir(), 'Downloads']);
     }
 
     _setup() {
         try {
-            const dirFile = Gio.File.new_for_path(this._downloadDir);
-            if (!dirFile.query_exists(null)) {
-                dirFile.make_directory_with_parents(null);
-            }
-
-            // Monitor folder Downloads secara real-time
-            this._monitor = dirFile.monitor_directory(Gio.FileMonitorFlags.WATCH_MOVES, null);
-            this._monitorId = this._monitor.connect('changed', (_m, file, otherFile, eventType) => {
-                this._handleFileEvent(file, otherFile, eventType);
+            const dir = Gio.File.new_for_path(this._downloadDir);
+            this._monitor = dir.monitor_directory(Gio.FileMonitorFlags.WATCH_MOVES, null);
+            this._monitorId = this._monitor.connect('changed', (_monitor, file, other, event) => {
+                this._handleFileEvent(file, other, event);
             });
         } catch (e) {
-            console.log('[DynamicIsland] Gagal memasang monitor folder Downloads:', e.message);
+            console.log('[DynamicIsland] Download monitor:', e.message);
         }
-
-        // Timer polling berkala (tiap 600ms) untuk memperbarui progres ukuran & persentase
         this._pollTimerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 600, () => {
             this._scanActiveDownloads();
             return GLib.SOURCE_CONTINUE;
         });
-
         this._scanActiveDownloads();
     }
 
@@ -56,103 +38,74 @@ export class DownloadWatcher {
     }
 
     _scanActiveDownloads() {
+        let enumerator;
         try {
             const dir = Gio.File.new_for_path(this._downloadDir);
-            const enumerator = dir.enumerate_children(
-                'standard::name,standard::size',
-                Gio.FileQueryInfoFlags.NONE,
-                null
-            );
-
-            let activeFound = null;
+            enumerator = dir.enumerate_children('standard::name,standard::size,standard::type',
+                Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS, null);
+            const next = new Map();
+            const now = GLib.get_monotonic_time();
             let info;
-
             while ((info = enumerator.next_file(null)) !== null) {
                 const name = info.get_name();
-                if (this._isDownloadFile(name)) {
-                    activeFound = {
-                        rawName: name,
-                        cleanName: this._cleanFileName(name),
-                        size: info.get_size(),
-                    };
-                    break;
+                if (!this._isDownloadFile(name) || info.get_file_type() !== Gio.FileType.REGULAR)
+                    continue;
+                // aria2 control files contain metadata, not downloaded payload bytes.
+                let size = info.get_size();
+                if (/\.aria2$/i.test(name)) {
+                    size = null;
                 }
-            }
-
-            if (activeFound) {
-                if (!this._activeDownload) {
-                    this._activeDownload = {
-                        name: activeFound.cleanName,
-                        rawName: activeFound.rawName,
-                        lastSize: activeFound.size,
-                        pct: 12,
-                    };
-                } else {
-                    // Jika ukuran file bertambah, naikkan progres secara dinamis
-                    if (activeFound.size > this._activeDownload.lastSize) {
-                        this._activeDownload.lastSize = activeFound.size;
-                        this._activeDownload.pct = Math.min(95, this._activeDownload.pct + Math.floor(Math.random() * 8) + 4);
-                    }
-                }
-
-                this._onProgress?.({
-                    filename: this._activeDownload.name,
-                    percentage: this._activeDownload.pct,
-                    isCompleted: false,
-                });
-            } else if (this._activeDownload) {
-                // File sementara (.crdownload/.part) baru saja hilang karena selesai diunduh & di-rename
-                const finishedName = this._activeDownload.name;
-                this._activeDownload = null;
-
-                this._onProgress?.({
-                    filename: finishedName,
-                    percentage: 100,
-                    isCompleted: true,
+                const previous = this._downloads.get(name);
+                const changed = !previous || size !== previous.size;
+                next.set(name, {
+                    filename: this._cleanFileName(name), rawName: name, size,
+                    changedAt: changed ? now : previous.changedAt,
+                    percentage: null, isCompleted: false,
                 });
             }
-        } catch (_) {}
+            const hadDownloads = this._downloads.size > 0;
+            this._downloads = next;
+            if (next.size) {
+                // Keep the selected file stable even when enumeration order changes.
+                if (!next.has(this._selectedName)) this._selectedName = next.keys().next().value;
+                const item = next.get(this._selectedName);
+                this._onProgress?.({...item, activeCount: next.size,
+                    waiting: now - item.changedAt > 5000000});
+            } else if (hadDownloads) {
+                this._selectedName = null;
+                this._onProgress?.(null);
+            }
+        } catch (e) {
+            // An inaccessible directory is not proof that an unduhan completed.
+        } finally {
+            enumerator?.close(null);
+        }
     }
 
     _handleFileEvent(file, otherFile, eventType) {
-        const name = file ? file.get_basename() : '';
+        const name = file?.get_basename();
         if (!name) return;
-
-        // Deteksi rename file saat unduhan selesai (Chrome / Firefox)
-        if (eventType === Gio.FileMonitorEvent.RENAMED && otherFile) {
-            const oldName = file.get_basename();
-            const newName = otherFile.get_basename();
-
-            if (this._isDownloadFile(oldName) && !this._isDownloadFile(newName)) {
-                this._activeDownload = null;
-                this._onProgress?.({
-                    filename: newName,
-                    percentage: 100,
-                    isCompleted: true,
-                });
-                return;
+        if (eventType === Gio.FileMonitorEvent.RENAMED && otherFile &&
+            this._downloads.has(name) && !/\.aria2$/i.test(name) &&
+            !this._isDownloadFile(otherFile.get_basename()) && otherFile.query_exists(null)) {
+            this._downloads.delete(name);
+            // Ongoing downloads take precedence over a completion banner.
+            if (!this._downloads.size) {
+                this._onProgress?.({filename: otherFile.get_basename(),
+                    percentage: 100, isCompleted: true});
             }
         }
-
-        // Trigger scan cepat bila ada event file baru atau perubahan
         this._scanActiveDownloads();
     }
 
     destroy() {
-        if (this._pollTimerId) {
-            GLib.source_remove(this._pollTimerId);
-            this._pollTimerId = null;
-        }
-
-        if (this._monitor && this._monitorId) {
-            try {
-                this._monitor.disconnect(this._monitorId);
-            } catch (_) {}
-            this._monitorId = null;
-            this._monitor = null;
-        }
-
-        this._activeDownload = null;
+        if (this._pollTimerId) GLib.source_remove(this._pollTimerId);
+        if (this._monitorId) this._monitor.disconnect(this._monitorId);
+        this._monitor?.cancel();
+        this._pollTimerId = null;
+        this._monitorId = null;
+        this._monitor = null;
+        this._downloads.clear();
         this._onProgress = null;
     }
 }
