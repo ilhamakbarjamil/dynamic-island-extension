@@ -23,6 +23,7 @@ export class VpnWatcher {
         try {
             const client = Main.panel?.statusArea?.quickSettings?._network?._client;
             if (client) {
+                this._nmClient = client;
                 this._nmSig = client.connect('notify::active-connections', () => this._checkStatus());
             }
         } catch (_) {}
@@ -58,18 +59,19 @@ export class VpnWatcher {
                     }
                 }
             }
-            return true;
+            return false;
         } catch (_) {
-            return true;
+            return false;
         }
     }
 
     _checkSysNet() {
+        let enumerator;
         try {
             const netDir = Gio.File.new_for_path('/sys/class/net');
             if (!netDir.query_exists(null)) return null;
 
-            const enumerator = netDir.enumerate_children('standard::name', Gio.FileQueryInfoFlags.NONE, null);
+            enumerator = netDir.enumerate_children('standard::name', Gio.FileQueryInfoFlags.NONE, null);
             let info;
 
             while ((info = enumerator.next_file(null)) !== null) {
@@ -95,6 +97,7 @@ export class VpnWatcher {
                 }
             }
         } catch (_) {}
+        finally { enumerator?.close(null); }
         return null;
     }
 
@@ -141,7 +144,8 @@ export class VpnWatcher {
         }
 
         // HANYA picu animasi saat status benar-benar BERUBAH (ON -> OFF atau OFF -> ON)
-        if (current.isConnected !== this._lastConnected) {
+        if (current.isConnected !== this._lastConnected ||
+            (current.isConnected && current.name !== this._lastName)) {
             const isNowConnected = current.isConnected;
             const displayName = isNowConnected ? current.name : (this._lastName || 'VPN');
 
@@ -164,8 +168,7 @@ export class VpnWatcher {
         }
         if (this._nmSig) {
             try {
-                const client = Main.panel?.statusArea?.quickSettings?._network?._client;
-                if (client) client.disconnect(this._nmSig);
+                this._nmClient?.disconnect(this._nmSig);
             } catch (_) {}
             this._nmSig = null;
         }

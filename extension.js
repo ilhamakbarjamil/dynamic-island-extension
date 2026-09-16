@@ -316,6 +316,30 @@ export default class DynamicIslandExtension extends Extension {
         this._allViews.set(VIEW_IDLE, this._idleBox);
     }
 
+    _utilityGlyph(path) {
+        return new Gio.BytesIcon({bytes: new GLib.Bytes(new TextEncoder().encode(
+            `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="${path}" fill="none" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>`))});
+    }
+
+    // Only workspace, VPN and mount use this brief popup transition.
+    _showUtilityPopup(view, actor, width, height, duration) {
+        if (this._bannerDismissId) GLib.source_remove(this._bannerDismissId);
+        if (this._currentView !== view) {
+            this._setView(view);
+            actor.clip_to_allocation = true;
+            actor.remove_all_transitions();
+            actor.opacity = 0;
+            this._repositionAndResize(width, height, 280, Clutter.AnimationMode.EASE_OUT_CUBIC);
+            actor.ease({opacity: 255, delay: 100, duration: 180,
+                mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+        }
+        this._bannerDismissId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, duration, () => {
+            this._bannerDismissId = null;
+            if (this._currentView === view) this._restoreBestView();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
     _initWorkspaceView() {
         this._wsBox = new St.BoxLayout({
             style_class: 'dynamic-island-ws-box',
@@ -327,7 +351,7 @@ export default class DynamicIslandExtension extends Extension {
 
         // Icon grid bernuansa Apple System Blue
         this._wsIcon = new St.Icon({
-            icon_name: 'view-grid-symbolic',
+            gicon: this._utilityGlyph('M3 5h7v14H3Z M14 5h7v14h-7Z'),
             icon_size: 14,
             style_class: 'dynamic-island-ws-icon',
             y_align: Clutter.ActorAlign.CENTER,
@@ -362,11 +386,13 @@ export default class DynamicIslandExtension extends Extension {
         if (this._bannerDismissId) GLib.source_remove(this._bannerDismissId);
 
         this._wsDotsBox.destroy_all_children();
-        const total = Math.min(6, Math.max(2, totalWorkspaces || 4));
+        const count = Math.max(1, totalWorkspaces || 1);
+        const total = Math.min(6, count);
+        const first = Math.max(1, Math.min(index - 2, count - total + 1));
 
         // Buat dot pagination ala iOS (Aktif = Kapsul lonjong lebar 14px, Inaktif = Bulat 5px)
         for (let i = 1; i <= total; i++) {
-            const isCurrent = (i === index);
+            const isCurrent = (first + i - 1 === index);
             const dot = new St.Widget({
                 style_class: isCurrent ? 'dynamic-island-ws-dot-active' : 'dynamic-island-ws-dot',
                 width: isCurrent ? 14 : 5,
@@ -377,15 +403,7 @@ export default class DynamicIslandExtension extends Extension {
         }
         this._wsLabel.set_text(name);
 
-        this._setView(VIEW_WORKSPACE);
-        this._repositionAndResize(this._wsWidth, this._collapsedHeight, 320, Clutter.AnimationMode.EASE_OUT_CUBIC);
-
-        // Tampilkan selama 1.3 detik lalu kembali otomatis (responsif ala iOS HUD)
-        this._bannerDismissId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1300, () => {
-            this._bannerDismissId = null;
-            this._restoreBestView();
-            return GLib.SOURCE_REMOVE;
-        });
+        this._showUtilityPopup(VIEW_WORKSPACE, this._wsBox, this._wsWidth, this._collapsedHeight, 1300);
     }
 
     _initCompactDownloadView() {
@@ -787,21 +805,26 @@ export default class DynamicIslandExtension extends Extension {
 
     _initMountView() {
         this._mountBox = new St.BoxLayout({ style_class: 'dynamic-island-mount-box', vertical: false, x_expand: true, y_expand: true, y_align: Clutter.ActorAlign.CENTER });
-        this._mountIconBin = new St.Bin({ style_class: 'dynamic-island-mount-icon-bin', child: new St.Icon({ icon_name: 'drive-removable-media-symbolic', icon_size: 14 }) });
+        this._mountIconBin = new St.Bin({ style_class: 'dynamic-island-mount-icon-bin', child: new St.Icon({ gicon: this._utilityGlyph('M4 4h16v16H4Z M4 15h16 M16 18h1'), icon_size: 14 }) });
         this._mountTextCol = new St.BoxLayout({ style_class: 'dynamic-island-mount-text-col', vertical: true, x_expand: true, y_align: Clutter.ActorAlign.CENTER });
         this._mountTitle = new St.Label({ style_class: 'dynamic-island-mount-title', text: 'USB Drive' });
         this._mountTitle.clutter_text.ellipsize = Pango.EllipsizeMode.END;
         this._mountSubtitle = new St.Label({ style_class: 'dynamic-island-mount-subtitle', text: 'Tersedia' });
+        this._mountSubtitle.clutter_text.ellipsize = Pango.EllipsizeMode.END;
         this._mountTextCol.add_child(this._mountTitle);
         this._mountTextCol.add_child(this._mountSubtitle);
 
-        this._mountEjectBtn = new St.Button({ style_class: 'dynamic-island-mount-eject-btn', child: new St.Icon({ icon_name: 'media-eject-symbolic', icon_size: 12 }), y_align: Clutter.ActorAlign.CENTER, can_focus: true });
+        this._mountEjectBtn = new St.Button({ style_class: 'dynamic-island-mount-eject-btn', child: new St.Icon({ gicon: this._utilityGlyph('m5 14 7-9 7 9Z M5 19h14'), icon_size: 12 }), y_align: Clutter.ActorAlign.CENTER, can_focus: true });
         this._mountEjectBtn.connect('clicked', () => {
             if (this._currentMount?.mount) {
-                this._mountWatcher.eject(this._currentMount.mount, (ok) => {
-                    this._mountSubtitle.set_text(ok ? 'Aman Dicabut ✓' : 'Gagal Eject');
-                    this._mountEjectBtn.visible = false;
-                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1400, () => { this._restoreBestView(); return GLib.SOURCE_REMOVE; });
+                const selected = this._currentMount;
+                this._mountEjectBtn.reactive = false;
+                this._mountWatcher.eject(selected.mount, (ok) => {
+                    if (this._currentMount !== selected || this._currentView !== VIEW_MOUNT) return;
+                    this._mountSubtitle.set_text(ok ? 'Aman dicabut' : 'Gagal melepas');
+                    this._mountEjectBtn.visible = !ok;
+                    this._mountEjectBtn.reactive = true;
+                    this._showUtilityPopup(VIEW_MOUNT, this._mountBox, this._mountWidth, 48, 2200);
                 });
             }
         });
@@ -883,6 +906,7 @@ export default class DynamicIslandExtension extends Extension {
         });
         this._vpnNameLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
 
+        this._vpnNameLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
         this._vpnStatusLabel = new St.Label({
             style_class: 'dynamic-island-vpn-status connected',
             text: 'Connected',
@@ -911,14 +935,14 @@ export default class DynamicIslandExtension extends Extension {
         }
 
         if (isConnected) {
-            if (this._vpnIcon) this._vpnIcon.icon_name = 'channel-secure-symbolic';
+            if (this._vpnIcon) this._vpnIcon.gicon = this._utilityGlyph('M5 11h14v10H5Z M8 11V7a4 4 0 0 1 8 0v4');
             if (this._vpnIconBin) this._vpnIconBin.style_class = 'dynamic-island-vpn-icon-bin connected';
             if (this._vpnStatusLabel) {
                 this._vpnStatusLabel.set_text('Connected');
                 this._vpnStatusLabel.style_class = 'dynamic-island-vpn-status connected';
             }
         } else {
-            if (this._vpnIcon) this._vpnIcon.icon_name = 'channel-insecure-symbolic';
+            if (this._vpnIcon) this._vpnIcon.gicon = this._utilityGlyph('M5 11h14v10H5Z M8 11V7a4 4 0 0 1 7-3');
             if (this._vpnIconBin) this._vpnIconBin.style_class = 'dynamic-island-vpn-icon-bin disconnected';
             if (this._vpnStatusLabel) {
                 this._vpnStatusLabel.set_text('Disconnected');
@@ -926,14 +950,7 @@ export default class DynamicIslandExtension extends Extension {
             }
         }
 
-        this._setView(VIEW_VPN);
-        this._repositionAndResize(this._vpnWidth, this._collapsedHeight, 320, Clutter.AnimationMode.EASE_OUT_CUBIC);
-
-        this._bannerDismissId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2600, () => {
-            this._bannerDismissId = null;
-            this._restoreBestView();
-            return GLib.SOURCE_REMOVE;
-        });
+        this._showUtilityPopup(VIEW_VPN, this._vpnBox, this._vpnWidth, this._collapsedHeight, 2200);
     }
 
     _initBluetoothView() {
@@ -1018,18 +1035,12 @@ export default class DynamicIslandExtension extends Extension {
         if (this._bannerDismissId) GLib.source_remove(this._bannerDismissId);
 
         this._currentMount = data;
+        this._mountEjectBtn.reactive = true;
         this._mountTitle.set_text(data.name);
-        this._mountSubtitle.set_text(data.freeSpace || 'Drive Terhubung');
-        this._mountEjectBtn.visible = true;
+        this._mountSubtitle.set_text('Terhubung');
+        this._mountEjectBtn.visible = Boolean(data.mount?.can_eject?.() || data.mount?.can_unmount?.());
 
-        this._setView(VIEW_MOUNT);
-        this._repositionAndResize(this._mountWidth, this._collapsedHeight, 320, Clutter.AnimationMode.EASE_OUT_CUBIC);
-
-        this._bannerDismissId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 3800, () => {
-            this._bannerDismissId = null;
-            if (!this._island.hover) this._restoreBestView();
-            return GLib.SOURCE_REMOVE;
-        });
+        this._showUtilityPopup(VIEW_MOUNT, this._mountBox, this._mountWidth, 48, 2600);
     }
 
     _onDriveRemoved(name) {
@@ -1037,13 +1048,7 @@ export default class DynamicIslandExtension extends Extension {
         this._mountTitle.set_text(name || 'Drive');
         this._mountSubtitle.set_text('Terputus');
         this._mountEjectBtn.visible = false;
-        this._setView(VIEW_MOUNT);
-        this._repositionAndResize(this._mountWidth, this._collapsedHeight, 320, Clutter.AnimationMode.EASE_OUT_CUBIC);
-
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1800, () => {
-            this._restoreBestView();
-            return GLib.SOURCE_REMOVE;
-        });
+        this._showUtilityPopup(VIEW_MOUNT, this._mountBox, this._mountWidth, 48, 1800);
     }
 
     _connectSource(source) {

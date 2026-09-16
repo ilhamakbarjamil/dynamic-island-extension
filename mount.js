@@ -23,8 +23,7 @@ export class MountWatcher {
             this._onDriveRemoved?.(name);
         });
 
-        const mounts = this._monitor.get_mounts?.() || [];
-        mounts.forEach(mount => this._notifyMounted(mount));
+        // Existing mounts are not new attachment events.
     }
 
     _notifyMounted(mount) {
@@ -48,28 +47,19 @@ export class MountWatcher {
     }
 
     eject(mount, callback) {
-        if (!mount || typeof mount.eject !== 'function') {
-            callback?.(false);
-            return;
-        }
-
+        if (!mount) { callback?.(false); return; }
+        const eject = mount.can_eject?.();
+        const method = eject ? 'eject_with_operation' : 'unmount_with_operation';
+        const finish = `${method}_finish`;
+        if (!eject && !mount.can_unmount?.()) { callback?.(false); return; }
         try {
-            mount.eject_with_operation.begin(
-                null,
-                Gio.MountOperation.new(null),
-                null,
-                (_obj, result) => {
-                    try {
-                        const ok = mount.eject_with_operation.end(result);
-                        callback?.(ok);
-                    } catch (_) {
-                        callback?.(false);
-                    }
-                }
-            );
-        } catch (_) {
-            callback?.(false);
-        }
+            mount[method](Gio.MountUnmountFlags.NONE, new Gio.MountOperation(), null,
+                (object, result) => {
+                    let ok = false;
+                    try { ok = object[finish](result); } catch (_) { }
+                    if (this._monitor) callback?.(ok);
+                });
+        } catch (_) { callback?.(false); }
     }
 
     destroy() {
