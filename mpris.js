@@ -244,29 +244,24 @@ export class MediaWatcher {
     }
 
     getPosition() {
-        if (!this._activeBusName) return 0;
-        try {
-            const player = this._players.get(this._activeBusName);
-            if (!player || !player.proxy) return 0;
-
-            // Batasi timeout hingga 300ms agar UI tidak pernah freeze
-            const res = player.proxy.get_connection().call_sync(
-                this._activeBusName,
-                MPRIS_PATH,
-                'org.freedesktop.DBus.Properties',
-                'Get',
-                new GLib.Variant('(ss)', [MPRIS_IFACE, 'Position']),
-                null,
-                Gio.DBusCallFlags.NONE,
-                300,
-                null
-            );
-            const [variant] = res.deep_unpack();
-            const val = unwrap(variant);
-            return Number(val) || 0;
-        } catch (_) {
-            return 0;
+        const busName = this._activeBusName;
+        const player = this._players.get(busName);
+        if (!player?.proxy) return 0;
+        if (!player.positionPending) {
+            player.positionPending = true;
+            player.proxy.get_connection().call(
+                busName, MPRIS_PATH, 'org.freedesktop.DBus.Properties', 'Get',
+                new GLib.Variant('(ss)', [MPRIS_IFACE, 'Position']), null,
+                Gio.DBusCallFlags.NONE, 1000, null, (connection, result) => {
+                    try {
+                        const [value] = connection.call_finish(result).deep_unpack();
+                        if (this._players.get(busName) === player)
+                            player.position = Math.max(0, Number(unwrap(value)) || 0);
+                    } catch (_) { /* Keep the last confirmed position on timeout. */ }
+                    player.positionPending = false;
+                });
         }
+        return player.position ?? 0;
     }
 
     togglePlayPause() { this._call('PlayPause'); }

@@ -98,6 +98,17 @@ export default class DynamicIslandExtension extends Extension {
         this._clockTickId = null;
         this._recordPulseId = null;
         this._pauseTimeoutId = null;
+        this._mediaPausedHidden = false;
+        this._mediaIntroTimeoutId = null;
+        this._mediaIntroMarker = GLib.build_filenamev([GLib.get_user_runtime_dir(), 'dynamic-island-mpris-intro']);
+        this._mediaBootId = '';
+        this._mediaIntroShown = false;
+        try {
+            const [, bootBytes] = GLib.file_get_contents('/proc/sys/kernel/random/boot_id');
+            this._mediaBootId = new TextDecoder().decode(bootBytes).trim();
+            const [, markerBytes] = GLib.file_get_contents(this._mediaIntroMarker);
+            this._mediaIntroShown = new TextDecoder().decode(markerBytes) === this._mediaBootId;
+        } catch (_) { }
         this._dlCompletedTimeoutId = null;
         this._dlCollapseTimeoutId = null;
         this._dlExpanded = false;
@@ -524,7 +535,7 @@ export default class DynamicIslandExtension extends Extension {
     }
 
     _initExpandedMediaView() {
-        this._mediaContent = new St.BoxLayout({ style_class: 'dynamic-island-media-content', vertical: true, x_expand: true, y_expand: true, reactive: true });
+        this._mediaContent = new St.BoxLayout({ style_class: 'dynamic-island-media-content', clip_to_allocation: true, vertical: true, x_expand: true, y_expand: true, reactive: true });
 
         this._topRow = new St.BoxLayout({ style_class: 'dynamic-island-media-top-row', vertical: false, x_expand: true, y_align: Clutter.ActorAlign.CENTER });
         this._mediaIcon = new St.Icon({ icon_size: 54, icon_name: 'audio-x-generic-symbolic' });
@@ -566,9 +577,15 @@ export default class DynamicIslandExtension extends Extension {
         this._mediaContent.add_child(this._progressSection);
 
         this._controlsRow = new St.BoxLayout({ style_class: 'dynamic-island-controls-row', vertical: false, x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER, x_expand: true });
-        this._prevBtn = new St.Button({ style_class: 'dynamic-island-ctrl-btn', child: new St.Icon({ icon_name: 'media-skip-backward-symbolic', icon_size: 20 }), can_focus: true, reactive: true });
-        this._playBtn = new St.Button({ style_class: 'dynamic-island-ctrl-btn dynamic-island-play-btn', child: new St.Icon({ icon_name: 'media-playback-start-symbolic', icon_size: 28 }), can_focus: true, reactive: true });
-        this._nextBtn = new St.Button({ style_class: 'dynamic-island-ctrl-btn', child: new St.Icon({ icon_name: 'media-skip-forward-symbolic', icon_size: 20 }), can_focus: true, reactive: true });
+        const mediaGlyph = path => new Gio.BytesIcon({bytes: new GLib.Bytes(new TextEncoder().encode(
+            `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="${path}" fill="white" stroke="white" stroke-width="1.2" stroke-linejoin="round"/></svg>`))});
+        this._mediaPlayGlyph = mediaGlyph('M7 4 20 12 7 20Z');
+        this._mediaPauseGlyph = mediaGlyph('M6 4h4v16H6Z M14 4h4v16h-4Z');
+        this._mediaPrevGlyph = mediaGlyph('M3 5h2v14H3Z M20 5 7 12l13 7Z');
+        this._mediaNextGlyph = mediaGlyph('M19 5h2v14h-2Z M4 5l13 7-13 7Z');
+        this._prevBtn = new St.Button({ style_class: 'dynamic-island-ctrl-btn', child: new St.Icon({ gicon: this._mediaPrevGlyph, icon_size: 20 }), can_focus: true, reactive: true });
+        this._playBtn = new St.Button({ style_class: 'dynamic-island-ctrl-btn dynamic-island-play-btn', child: new St.Icon({ gicon: this._mediaPlayGlyph, icon_size: 28 }), can_focus: true, reactive: true });
+        this._nextBtn = new St.Button({ style_class: 'dynamic-island-ctrl-btn', child: new St.Icon({ gicon: this._mediaNextGlyph, icon_size: 20 }), can_focus: true, reactive: true });
         this._controlsRow.add_child(this._prevBtn);
         this._controlsRow.add_child(this._playBtn);
         this._controlsRow.add_child(this._nextBtn);
@@ -1313,44 +1330,69 @@ export default class DynamicIslandExtension extends Extension {
         this._recordExpandedDot?.ease({ opacity: 255, duration: 150, mode: Clutter.AnimationMode.EASE_OUT_QUAD });
     }
 
+    _expandMpris() {
+        if (this._currentView === VIEW_EXPANDED_MEDIA) return;
+        this._isExpanded = true;
+        this._setView(VIEW_EXPANDED_MEDIA);
+        this._mediaContent.remove_all_transitions();
+        this._mediaContent.opacity = 0;
+        this._repositionAndResize(this._mediaExpandedWidth, this._mediaExpandedHeight, 320,
+            Clutter.AnimationMode.EASE_OUT_CUBIC);
+        this._mediaContent.ease({opacity: 255, delay: 180, duration: 140,
+            mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+        this._updateMediaProgress();
+    }
+
     _onMediaUpdate(state) {
         this._currentMedia = state;
-
-        // 1. Jika tidak ada musik atau player mati
+        const playing = state?.status === 'Playing';
+        if (playing || !state || state.status === 'Stopped') {
+            if (this._pauseTimeoutId) GLib.source_remove(this._pauseTimeoutId);
+            this._pauseTimeoutId = null;
+            this._mediaPausedHidden = false;
+        }
         if (!state || state.status === 'Stopped') {
             this._mediaActive = false;
-            // Jika saat ini sedang menampilkan musik, kembalikan ke jam (idle)
-            if (this._currentView === VIEW_COMPACT_MEDIA || this._currentView === VIEW_EXPANDED_MEDIA) {
+            if ([VIEW_COMPACT_MEDIA, VIEW_EXPANDED_MEDIA].includes(this._currentView))
                 this._restoreBestView();
-            }
             this._syncControlCenterUI();
             return;
         }
-
-        // 2. Tandai musik sebagai aktif (Playing maupun Paused)
-        this._mediaActive = true;
-
-        // 3. Update Label & Gambar (Art)
+        if (!playing && !this._pauseTimeoutId && !this._mediaPausedHidden) {
+            this._pauseTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 5000, () => {
+                this._pauseTimeoutId = null;
+                this._mediaPausedHidden = true;
+                this._mediaActive = false;
+                if ([VIEW_COMPACT_MEDIA, VIEW_EXPANDED_MEDIA].includes(this._currentView))
+                    this._restoreBestView();
+                return GLib.SOURCE_REMOVE;
+            });
+        }
+        this._mediaActive = playing || !this._mediaPausedHidden;
         this._titleLabel.set_text(state.title || 'Unknown Title');
         this._bodyLabel.set_text(state.artist || 'Unknown Artist');
         this._loadCoverArt(state.artUrl);
+        this._playBtn.child.gicon = playing ? this._mediaPauseGlyph : this._mediaPlayGlyph;
+        this._prevBtn.reactive = state.canPrev !== false;
+        this._nextBtn.reactive = state.canNext !== false;
+        this._prevBtn.opacity = this._prevBtn.reactive ? 255 : 80;
+        this._nextBtn.opacity = this._nextBtn.reactive ? 255 : 80;
 
-        // 4. Update Icon Play/Pause di mode expanded
-        const playIcon = (state.status === 'Playing') ? 'media-playback-pause-symbolic' : 'media-playback-start-symbolic';
-        if (this._playBtn && this._playBtn.child) {
-            this._playBtn.child.icon_name = playIcon;
+        if (playing && !this._mediaIntroShown && !this._isExpanded &&
+            !this._isControlCenterOpen && [VIEW_IDLE, VIEW_COMPACT_MEDIA].includes(this._currentView)) {
+            this._mediaIntroShown = true;
+            try { GLib.file_set_contents(this._mediaIntroMarker, this._mediaBootId); } catch (_) { }
+            this._expandMpris();
+            this._mediaIntroTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 3000, () => {
+                this._mediaIntroTimeoutId = null;
+                if (this._currentView === VIEW_EXPANDED_MEDIA) this._restoreBestView();
+                return GLib.SOURCE_REMOVE;
+            });
+        } else if (this._mediaActive && !this._isExpanded && !this._isControlCenterOpen &&
+            this._currentView === VIEW_IDLE) {
+            this._setView(VIEW_COMPACT_MEDIA);
+            this._repositionAndResize(this._compactMediaWidth, this._collapsedHeight, 300);
         }
-
-        // 5. LOGIKA PEMAKSA TAMPILAN
-        // Jika tidak sedang dalam mode besar (Expanded/Control Center)
-        if (!this._isExpanded && !this._isControlCenterOpen) {
-            // Tampilkan musik jika: Island sedang idle, ATAU sedang menampilkan musik tapi butuh refresh
-            if (this._currentView === VIEW_IDLE || this._currentView === VIEW_COMPACT_MEDIA) {
-                this._setView(VIEW_COMPACT_MEDIA);
-                this._repositionAndResize(this._compactMediaWidth, this._collapsedHeight, 300);
-            }
-        }
-
         this._updateMediaProgress();
         this._syncControlCenterUI();
     }
@@ -1543,10 +1585,7 @@ export default class DynamicIslandExtension extends Extension {
                         this._setView(VIEW_EXPANDED_RECORD);
                         this._repositionAndResize(this._mediaExpandedWidth, this._recordExpandedHeight, 340, Clutter.AnimationMode.EASE_OUT_CUBIC);
                     } else if (this._mediaActive) {
-                        this._isExpanded = true;
-                        this._setView(VIEW_EXPANDED_MEDIA);
-                        this._repositionAndResize(this._mediaExpandedWidth, this._mediaExpandedHeight, 340, Clutter.AnimationMode.EASE_OUT_CUBIC);
-                        this._updateMediaProgress();
+                        this._expandMpris();
                     } else {
                         this._expandControlCenter();
                     }
@@ -1636,6 +1675,7 @@ export default class DynamicIslandExtension extends Extension {
         if (this._countdownTickId) GLib.source_remove(this._countdownTickId);
         if (this._recordPulseId) GLib.source_remove(this._recordPulseId);
         if (this._pauseTimeoutId) GLib.source_remove(this._pauseTimeoutId);
+        if (this._mediaIntroTimeoutId) GLib.source_remove(this._mediaIntroTimeoutId);
         if (this._dlCompletedTimeoutId) GLib.source_remove(this._dlCompletedTimeoutId);
 
         if (this._origOsdShow) Main.osdWindowManager.show = this._origOsdShow;
