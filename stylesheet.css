@@ -26,33 +26,41 @@
     text-align: center;
 }
 
-/* ================= 2. NOTIFIKASI SQUIRCLE ================= */
+/* ================= 2. NOTIFICATION PREVIEW ================= */
 .dynamic-island-notif-box {
-    padding: 0 16px;
-    spacing: 14px;
+    padding: 12px 18px;
+    spacing: 12px;
 }
 
 .dynamic-island-notif-art {
-    width: 40px;
-    height: 40px;
-    border-radius: 10px;
+    width: 36px;
+    height: 36px;
+    border-radius: 11px;
     background-color: #1c1c1e;
 }
 
-.dynamic-island-notif-text-box {
-    spacing: 2px;
-}
+.dynamic-island-notif-text-box { spacing: 5px; }
 
 .dynamic-island-notif-title {
-    color: #ffffff;
-    font-size: 0.94em;
-    font-weight: 700;
+    color: #f5f5f7;
+    font-size: 13px;
+    font-weight: 600;
+    min-width: 0;
+}
+
+.dynamic-island-notif-badge {
+    color: #98989f;
+    font-size: 10px;
+    font-weight: 400;
+    text-align: right;
+    margin-left: 8px;
 }
 
 .dynamic-island-notif-body {
-    color: #8e8e93;
-    font-size: 0.82em;
-    font-weight: 500;
+    color: #c7c7cc;
+    font-size: 12px;
+    font-weight: 400;
+    min-width: 0;
 }
 
 /* ================= 3. COMPACT VIEW (COLLAPSED MUSIC) ================= */

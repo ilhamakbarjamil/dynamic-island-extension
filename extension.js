@@ -66,7 +66,7 @@ export default class DynamicIslandExtension extends Extension {
         this._mediaExpandedWidth = 370;
         this._mediaExpandedHeight = 160;
         this._notifWidth = 372;
-        this._notifHeight = 82;
+        this._notifHeight = 94;
         this._recordExpandedHeight = 88;
         this._countdownWidth = this._idleWidth;
 
@@ -169,6 +169,7 @@ export default class DynamicIslandExtension extends Extension {
 
         // Notifications
         this._sourceConnections = new Map();
+        this._notificationConnections = new Map();
         Main.messageTray.getSources().forEach(s => this._connectSource(s));
         this._sourceAddedId = Main.messageTray.connect('source-added', (_t, s) => this._connectSource(s));
         this._sourceRemovedId = Main.messageTray.connect('source-removed', (_t, s) => this._disconnectSource(s));
@@ -202,6 +203,11 @@ export default class DynamicIslandExtension extends Extension {
     _restoreBestView() {
         if (this._isControlCenterOpen) {
             this._setView(VIEW_CONTROL_CENTER);
+            return;
+        }
+
+        if (this._notificationQueue.length) {
+            this._processQueue();
             return;
         }
 
@@ -782,19 +788,23 @@ export default class DynamicIslandExtension extends Extension {
     }
 
     _initNotificationView() {
-        this._notifBox = new St.BoxLayout({ style_class: 'dynamic-island-notif-box', vertical: false, x_expand: true, y_expand: true, y_align: Clutter.ActorAlign.CENTER, reactive: true });
-        this._notifIcon = new St.Icon({ icon_size: 38, icon_name: 'dialog-information-symbolic' });
+        this._notifBox = new St.BoxLayout({ style_class: 'dynamic-island-notif-box', clip_to_allocation: true, vertical: false, x_expand: true, y_expand: true, y_align: Clutter.ActorAlign.CENTER, reactive: true });
+        this._notifFallbackIcon = new Gio.BytesIcon({bytes: new GLib.Bytes(new TextEncoder().encode(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><path d="M24 21c3-2 4-5 3-8S22 6 16 6 5 10 5 15c0 3 2 6 5 8l-1 4 6-3h1c3 0 6-1 8-3Z" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>'))});
+        this._notifIcon = new St.Icon({ icon_size: 28, gicon: this._notifFallbackIcon });
         this._notifIconBin = new St.Bin({ style_class: 'dynamic-island-notif-art', x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER, child: this._notifIcon });
 
-        this._notifTextBox = new St.BoxLayout({ style_class: 'dynamic-island-notif-text-box', vertical: true, x_expand: true, y_align: Clutter.ActorAlign.CENTER });
+        this._notifTextBox = new St.BoxLayout({ style_class: 'dynamic-island-notif-text-box', width: 280, vertical: true, x_expand: false, y_align: Clutter.ActorAlign.CENTER });
         this._notifHeaderRow = new St.BoxLayout({ vertical: false, x_expand: true, y_align: Clutter.ActorAlign.CENTER });
         this._notifTitle = new St.Label({ style_class: 'dynamic-island-notif-title', text: 'Pengirim', x_expand: true });
         this._notifTitle.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-        this._notifAppBadge = new St.Label({ style_class: 'dynamic-island-notif-badge', text: 'PESAN' });
+        this._notifAppBadge = new St.Label({ style_class: 'dynamic-island-notif-badge', text: '', width: 76 });
+        this._notifAppBadge.clutter_text.ellipsize = Pango.EllipsizeMode.END;
         this._notifHeaderRow.add_child(this._notifTitle);
         this._notifHeaderRow.add_child(this._notifAppBadge);
 
-        this._notifBody = new St.Label({ style_class: 'dynamic-island-notif-body', text: 'Isi teks pesan...' });
+        this._notifBody = new St.Label({ style_class: 'dynamic-island-notif-body', text: '', height: 36 });
+        this._notifBody.clutter_text.use_markup = false;
         this._notifBody.clutter_text.line_wrap = true;
         this._notifBody.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
         this._notifBody.clutter_text.ellipsize = Pango.EllipsizeMode.END;
@@ -1003,7 +1013,11 @@ export default class DynamicIslandExtension extends Extension {
 
     _connectSource(source) {
         if (this._sourceConnections.has(source)) return;
-        const id = source.connect('notification-added', (_s, n) => this._onNotification(n));
+        const id = source.connect('notification-added', (_s, n) => {
+            this._watchNotification(n);
+            this._onNotification(n);
+        });
+        for (const n of source.notifications ?? []) this._watchNotification(n);
         this._sourceConnections.set(source, id);
     }
 
@@ -1014,28 +1028,50 @@ export default class DynamicIslandExtension extends Extension {
         }
     }
 
+    _watchNotification(notification) {
+        if (this._notificationConnections.has(notification)) return;
+        const changed = notification.connect('notify', (_n, property) => {
+            if (['title', 'body', 'gicon'].includes(property.name))
+                this._onNotification(notification);
+        });
+        const destroyed = notification.connect('destroy', () => {
+            this._notificationQueue = this._notificationQueue.filter(n => n !== notification);
+            this._unwatchNotification(notification);
+            if (this._currentNotification === notification) this._dismissNotification();
+        });
+        this._notificationConnections.set(notification, [changed, destroyed]);
+    }
+
+    _unwatchNotification(notification) {
+        for (const id of this._notificationConnections.get(notification) ?? [])
+            notification.disconnect(id);
+        this._notificationConnections.delete(notification);
+    }
+
     _onNotification(notification) {
-        this._notificationQueue.push(notification);
+        // The latest message replaces the preview; older messages stay in GNOME history.
+        this._notificationQueue = [notification];
         this._processQueue();
     }
 
     _processQueue() {
-        if (this._isProcessingQueue || this._notificationQueue.length === 0 || this._isControlCenterOpen) return;
+        if (this._notificationQueue.length === 0 || this._isControlCenterOpen) return;
 
         this._isProcessingQueue = true;
         this._currentNotification = this._notificationQueue.shift();
         this._waitingForMouseLeave = false;
 
         const n = this._currentNotification;
-        this._notifTitle.set_text(n.title || 'Notifikasi');
-        this._notifBody.set_text(n.body || '');
+        this._notifTitle.set_text((n.title || 'Notifikasi').replace(/\s+/g, ' ').slice(0, 256));
+        this._notifBody.set_text((n.body || '').replace(/\s+/g, ' ').slice(0, 2000));
 
         const sourceName = n.source?.title || n.source?.name || '';
-        this._notifAppBadge.set_text(sourceName ? sourceName.toUpperCase() : 'PESAN');
+        this._notifAppBadge.set_text(sourceName || '');
 
         if (n.gicon) this._setNotifIcon({ gicon: n.gicon });
-        else if (n.icon_name) this._setNotifIcon({ iconName: n.icon_name });
-        else this._setNotifIcon({ iconName: 'dialog-information-symbolic' });
+        else if (n.source?.app?.get_app_info()?.get_icon())
+            this._setNotifIcon({gicon: n.source.app.get_app_info().get_icon()});
+        else this._setNotifIcon({});
 
         this._expandNotification();
     }
@@ -1045,25 +1081,39 @@ export default class DynamicIslandExtension extends Extension {
         this._notifIcon.icon_name = null;
         if (gicon) this._notifIcon.gicon = gicon;
         else if (iconName) this._notifIcon.icon_name = iconName;
-        else this._notifIcon.icon_name = 'dialog-information-symbolic';
+        else this._notifIcon.gicon = this._notifFallbackIcon;
     }
 
     _expandNotification() {
+        const alreadyVisible = this._currentView === VIEW_NOTIFICATION;
         this._isExpanded = true;
-        this._setView(VIEW_NOTIFICATION);
-        this._repositionAndResize(this._notifWidth, this._notifHeight, 340, Clutter.AnimationMode.EASE_OUT_CUBIC);
-
+        if (!alreadyVisible) {
+            this._setView(VIEW_NOTIFICATION);
+            this._notifBox.remove_all_transitions();
+            this._notifBox.opacity = 0;
+            this._repositionAndResize(this._notifWidth, this._notifHeight, 320,
+                Clutter.AnimationMode.EASE_OUT_CUBIC);
+            this._notifBox.ease({opacity: 255, delay: 140, duration: 180,
+                mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+        }
         if (this._autoCollapseId) GLib.source_remove(this._autoCollapseId);
         this._autoCollapseId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 4500, () => {
             this._autoCollapseId = null;
-            if (this._island.hover) {
+            if (this._currentView === VIEW_NOTIFICATION && this._island.hover)
                 this._waitingForMouseLeave = true;
-            } else {
-                this._isProcessingQueue = false;
-                this._restoreBestView();
-            }
+            else
+                this._dismissNotification();
             return GLib.SOURCE_REMOVE;
         });
+    }
+
+    _dismissNotification() {
+        if (this._autoCollapseId) GLib.source_remove(this._autoCollapseId);
+        this._autoCollapseId = null;
+        this._isProcessingQueue = false;
+        this._waitingForMouseLeave = false;
+        this._currentNotification = null;
+        if (this._currentView === VIEW_NOTIFICATION) this._restoreBestView();
     }
 
     _activateCurrentNotification() {
@@ -1090,14 +1140,7 @@ export default class DynamicIslandExtension extends Extension {
             }
         } catch (_) { }
 
-        // 3. Langsung tutup/kembalikan Dynamic Island ke tampilan normal
-        if (this._autoCollapseId) {
-            GLib.source_remove(this._autoCollapseId);
-            this._autoCollapseId = null;
-        }
-        this._isProcessingQueue = false;
-        this._waitingForMouseLeave = false;
-        this._restoreBestView();
+        this._dismissNotification();
     }
 
     _expandControlCenter() {
@@ -1513,9 +1556,7 @@ export default class DynamicIslandExtension extends Extension {
                     this._unhoverTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 260, () => {
                         this._unhoverTimeoutId = null;
                         if (this._isProcessingQueue && this._waitingForMouseLeave) {
-                            this._waitingForMouseLeave = false;
-                            this._isProcessingQueue = false;
-                            this._restoreBestView();
+                            this._dismissNotification();
                         } else if (!this._isProcessingQueue) {
                             this._collapse();
                         }
@@ -1611,6 +1652,10 @@ export default class DynamicIslandExtension extends Extension {
             try { source.disconnect(id); } catch (_) { }
         }
         this._sourceConnections.clear();
+        for (const notification of this._notificationConnections.keys())
+            this._unwatchNotification(notification);
+        this._notificationQueue = [];
+        this._currentNotification = null;
 
         if (this._cc) this._cc.destroy();
         if (this._recorder) this._recorder.destroy();
